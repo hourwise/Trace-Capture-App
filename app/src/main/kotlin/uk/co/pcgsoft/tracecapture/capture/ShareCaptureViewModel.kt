@@ -4,6 +4,7 @@ import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,7 +24,12 @@ sealed interface ShareCaptureUiState {
     ) : ShareCaptureUiState
     data class Invalid(val reason: ShareRejectionReason) : ShareCaptureUiState
     data class Saved(val captureId: String) : ShareCaptureUiState
-    data class Failed(val reason: ShareRejectionReason? = null, val draft: CaptureDraft?) : ShareCaptureUiState
+    data class Failed(
+        val draft: CaptureDraft,
+        val note: String,
+        val duplicate: DuplicateCaptureWarning?,
+        val message: String
+    ) : ShareCaptureUiState
 }
 
 @HiltViewModel
@@ -36,9 +42,15 @@ class ShareCaptureViewModel @Inject constructor(
     private val _uiState = MutableStateFlow<ShareCaptureUiState>(ShareCaptureUiState.Loading)
     val uiState: StateFlow<ShareCaptureUiState> = _uiState.asStateFlow()
 
-    private var currentDraft: CaptureDraft? = null
+    private var duplicateLookupJob: Job? = null
+    private var saveJob: Job? = null
 
     fun processIntent(intent: Intent?) {
+        if (isSaving()) return
+
+        duplicateLookupJob?.cancel()
+        duplicateLookupJob = null
+
         if (intent == null) {
             _uiState.value = ShareCaptureUiState.Invalid(ShareRejectionReason.MISSING_CONTENT)
             return
@@ -47,7 +59,6 @@ class ShareCaptureViewModel @Inject constructor(
         val result = processor.process(intent)
         when (result) {
             is SharedCaptureResult.Ready -> {
-                currentDraft = result.draft
                 _uiState.value = ShareCaptureUiState.Ready(
                     draft = result.draft,
                     note = "",
@@ -59,7 +70,6 @@ class ShareCaptureViewModel @Inject constructor(
                 }
             }
             is SharedCaptureResult.Rejected -> {
-                currentDraft = null
                 _uiState.value = ShareCaptureUiState.Invalid(result.reason)
             }
         }
@@ -76,56 +86,65 @@ class ShareCaptureViewModel @Inject constructor(
         val state = _uiState.value as? ShareCaptureUiState.Ready ?: return
         if (state.isSaving) return
 
+        val draftToSave = state.draft
+        val noteToSave = state.note.ifBlank { null }
+
         _uiState.value = state.copy(isSaving = true)
 
-        viewModelScope.launch {
+        saveJob = viewModelScope.launch {
             try {
-                val draft = currentDraft ?: return@launch
-                val note = state.note.ifBlank { null }
-
                 val item = factory.create(
-                    originalContent = draft.originalContent,
-                    primaryUrl = draft.primaryUrl,
-                    detectedUrls = draft.detectedUrls,
-                    sourcePackageName = draft.sourcePackageName,
-                    sourceLabel = draft.sourceLabel,
-                    note = note,
-                    captureType = draft.captureType
+                    originalContent = draftToSave.originalContent,
+                    primaryUrl = draftToSave.primaryUrl,
+                    detectedUrls = draftToSave.detectedUrls,
+                    sourcePackageName = draftToSave.sourcePackageName,
+                    sourceLabel = draftToSave.sourceLabel,
+                    note = noteToSave,
+                    captureType = draftToSave.captureType
                 )
 
                 repository.save(item)
 
                 _uiState.value = ShareCaptureUiState.Saved(captureId = item.id)
             } catch (e: Exception) {
-                _uiState.value = ShareCaptureUiState.Failed(draft = currentDraft)
+                val currentState = _uiState.value
+                if (currentState is ShareCaptureUiState.Ready) {
+                    _uiState.value = ShareCaptureUiState.Failed(
+                        draft = draftToSave,
+                        note = state.note,
+                        duplicate = currentState.duplicate,
+                        message = "TRACE Capture could not save this item. Nothing was lost; try again."
+                    )
+                }
             }
         }
     }
 
     fun retry() {
         val state = _uiState.value as? ShareCaptureUiState.Failed ?: return
-        currentDraft = state.draft
-        if (state.draft != null) {
-            _uiState.value = ShareCaptureUiState.Ready(
-                draft = state.draft,
-                note = "",
-                duplicate = null,
-                isSaving = false
-            )
-            if (state.draft.primaryUrl != null) {
-                checkDuplicate(state.draft.primaryUrl)
-            }
-        }
+        _uiState.value = ShareCaptureUiState.Ready(
+            draft = state.draft,
+            note = state.note,
+            duplicate = state.duplicate,
+            isSaving = false
+        )
+    }
+
+    private fun isSaving(): Boolean {
+        return _uiState.value is ShareCaptureUiState.Ready &&
+            (_uiState.value as ShareCaptureUiState.Ready).isSaving
     }
 
     private fun checkDuplicate(primaryUrl: String) {
-        viewModelScope.launch {
+        duplicateLookupJob = viewModelScope.launch {
             try {
                 val duplicates = repository.findExactUrlDuplicates(primaryUrl)
                 if (duplicates.isNotEmpty()) {
                     val newest = duplicates.maxBy { it.createdAtEpochMillis }
                     val current = _uiState.value
-                    if (current is ShareCaptureUiState.Ready) {
+                    if (current is ShareCaptureUiState.Ready &&
+                        current.draft.primaryUrl == primaryUrl
+                    ) {
                         _uiState.value = current.copy(
                             duplicate = DuplicateCaptureWarning(
                                 existingCaptureId = newest.id,

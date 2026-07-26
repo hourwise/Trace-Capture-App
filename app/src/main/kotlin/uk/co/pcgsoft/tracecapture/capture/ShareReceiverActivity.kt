@@ -111,6 +111,7 @@ private fun QuickCaptureScreen(
             )
             is ShareCaptureUiState.Saved -> SavedConfirmation()
             is ShareCaptureUiState.Failed -> FailedContent(
+                message = s.message,
                 onRetry = onRetry,
                 onCancel = onCancel
             )
@@ -232,7 +233,10 @@ private fun ReadyContent(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.End
     ) {
-        OutlinedButton(onClick = onCancel) {
+        OutlinedButton(
+            onClick = onCancel,
+            enabled = !state.isSaving
+        ) {
             Text(stringResource(uk.co.pcgsoft.tracecapture.R.string.cancel_button))
         }
         Spacer(Modifier.width(12.dp))
@@ -269,6 +273,7 @@ private fun SavedConfirmation() {
 
 @Composable
 private fun FailedContent(
+    message: String,
     onRetry: () -> Unit,
     onCancel: () -> Unit
 ) {
@@ -279,7 +284,7 @@ private fun FailedContent(
         modifier = Modifier.fillMaxWidth()
     ) {
         Text(
-            text = stringResource(uk.co.pcgsoft.tracecapture.R.string.save_failed),
+            text = message,
             modifier = Modifier.padding(16.dp),
             style = MaterialTheme.typography.bodyMedium
         )

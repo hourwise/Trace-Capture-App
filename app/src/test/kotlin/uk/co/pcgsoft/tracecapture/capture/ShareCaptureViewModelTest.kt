@@ -5,7 +5,6 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -21,10 +20,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import uk.co.pcgsoft.tracecapture.data.local.CaptureItemFactory
-import uk.co.pcgsoft.tracecapture.data.local.CaptureValidator
 import uk.co.pcgsoft.tracecapture.data.repository.CaptureRepository
 import uk.co.pcgsoft.tracecapture.domain.CaptureItem
+import uk.co.pcgsoft.tracecapture.domain.CaptureStatus
 import uk.co.pcgsoft.tracecapture.domain.CaptureType
+import uk.co.pcgsoft.tracecapture.domain.SyncStatus
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ShareCaptureViewModelTest {
@@ -47,38 +47,54 @@ class ShareCaptureViewModelTest {
         Dispatchers.resetMain()
     }
 
+    private fun draftA() = CaptureDraft(
+        originalContent = "https://a.com",
+        primaryUrl = "https://a.com",
+        detectedUrls = listOf("https://a.com"),
+        sourcePackageName = null,
+        sourceLabel = null,
+        captureType = CaptureType.URL
+    )
+
+    private fun draftB() = CaptureDraft(
+        originalContent = "https://b.com",
+        primaryUrl = "https://b.com",
+        detectedUrls = listOf("https://b.com"),
+        sourcePackageName = null,
+        sourceLabel = null,
+        captureType = CaptureType.URL
+    )
+
+    private fun dupItem(id: String, url: String, createdAt: Long) = CaptureItem(
+        id = id, createdAtEpochMillis = createdAt, updatedAtEpochMillis = createdAt,
+        originalContent = "old", primaryUrl = url, detectedUrls = emptyList(),
+        sourcePackageName = null, sourceLabel = null, note = null,
+        captureType = CaptureType.URL, status = CaptureStatus.PENDING,
+        syncStatus = SyncStatus.LOCAL_ONLY, duplicateOfId = null,
+        archivedAtEpochMillis = null, deletedAtEpochMillis = null
+    )
+
     @Test
     fun `processIntent with valid URL sets Ready state`() = runTest {
-        val intent = mockk<Intent>()
-        every { processor.process(intent) } returns SharedCaptureResult.Ready(
-            draft = CaptureDraft(
-                originalContent = "https://example.com",
-                primaryUrl = "https://example.com",
-                detectedUrls = listOf("https://example.com"),
-                sourcePackageName = "com.example",
-                sourceLabel = "Example",
-                captureType = CaptureType.URL
-            )
-        )
-        coEvery { repository.findExactUrlDuplicates(any(), any()) } returns emptyList()
+        every { processor.process(any()) } returns SharedCaptureResult.Ready(draftA())
+        coEvery { repository.findExactUrlDuplicates("https://a.com", null) } returns emptyList()
 
-        viewModel.processIntent(intent)
+        viewModel.processIntent(mockk())
         advanceUntilIdle()
 
         val state = viewModel.uiState.value
         assertTrue(state is ShareCaptureUiState.Ready)
         val ready = state as ShareCaptureUiState.Ready
-        assertEquals("https://example.com", ready.draft.primaryUrl)
+        assertEquals("https://a.com", ready.draft.primaryUrl)
         assertEquals("", ready.note)
         assertNull(ready.duplicate)
     }
 
     @Test
     fun `processIntent with parser rejection sets Invalid state`() {
-        val intent = mockk<Intent>()
-        every { processor.process(intent) } returns SharedCaptureResult.Rejected(ShareRejectionReason.UNSUPPORTED_MIME_TYPE)
+        every { processor.process(any()) } returns SharedCaptureResult.Rejected(ShareRejectionReason.UNSUPPORTED_MIME_TYPE)
 
-        viewModel.processIntent(intent)
+        viewModel.processIntent(mockk())
 
         val state = viewModel.uiState.value
         assertTrue(state is ShareCaptureUiState.Invalid)
@@ -94,9 +110,29 @@ class ShareCaptureViewModelTest {
     }
 
     @Test
+    fun `processIntent ignores new intent while saving`() = runTest {
+        every { processor.process(any()) } returns SharedCaptureResult.Ready(draftA())
+        coEvery { repository.findExactUrlDuplicates(any(), any()) } returns emptyList()
+        coEvery { repository.save(any()) } coAnswers { kotlinx.coroutines.delay(10_000) }
+
+        viewModel.processIntent(mockk())
+        advanceUntilIdle()
+        viewModel.save()
+        // Save is in progress, isSaving = true
+
+        viewModel.processIntent(mockk())
+
+        val state = viewModel.uiState.value
+        assertTrue(state is ShareCaptureUiState.Ready)
+        val ready = state as ShareCaptureUiState.Ready
+        assertEquals("https://a.com", ready.draft.primaryUrl)
+        assertTrue(ready.isSaving)
+    }
+
+    @Test
     fun `updateNote changes note in Ready state`() {
         every { processor.process(any()) } returns SharedCaptureResult.Ready(
-            draft = CaptureDraft("text", null, emptyList(), null, null, CaptureType.TEXT)
+            CaptureDraft("text", null, emptyList(), null, null, CaptureType.TEXT)
         )
         coEvery { repository.findExactUrlDuplicates(any(), any()) } returns emptyList()
 
@@ -110,14 +146,13 @@ class ShareCaptureViewModelTest {
     @Test
     fun `updateNote enforces 2000 char limit`() {
         every { processor.process(any()) } returns SharedCaptureResult.Ready(
-            draft = CaptureDraft("text", null, emptyList(), null, null, CaptureType.TEXT)
+            CaptureDraft("text", null, emptyList(), null, null, CaptureType.TEXT)
         )
         coEvery { repository.findExactUrlDuplicates(any(), any()) } returns emptyList()
 
         viewModel.processIntent(mockk())
         viewModel.updateNote("valid")
-        val longNote = "a".repeat(2500)
-        viewModel.updateNote(longNote)
+        viewModel.updateNote("a".repeat(2500))
 
         val state = viewModel.uiState.value as ShareCaptureUiState.Ready
         assertEquals("valid", state.note)
@@ -125,34 +160,45 @@ class ShareCaptureViewModelTest {
 
     @Test
     fun `save creates item via factory and saves via repository`() = runTest {
-        val intent = mockk<Intent>()
-        every { processor.process(intent) } returns SharedCaptureResult.Ready(
-            draft = CaptureDraft(
-                originalContent = "https://example.com",
-                primaryUrl = "https://example.com",
-                detectedUrls = listOf("https://example.com"),
-                sourcePackageName = null,
-                sourceLabel = null,
-                captureType = CaptureType.URL
-            )
-        )
+        every { processor.process(any()) } returns SharedCaptureResult.Ready(draftA())
         coEvery { repository.findExactUrlDuplicates(any(), any()) } returns emptyList()
         coEvery { repository.save(any()) } returns Unit
 
-        viewModel.processIntent(intent)
+        viewModel.processIntent(mockk())
         advanceUntilIdle()
         viewModel.save()
         advanceUntilIdle()
 
         coVerify { repository.save(any()) }
-        val state = viewModel.uiState.value
-        assertTrue(state is ShareCaptureUiState.Saved)
+        assertTrue(viewModel.uiState.value is ShareCaptureUiState.Saved)
+    }
+
+    @Test
+    fun `save snapshots exact draft when new intent arrives`() = runTest {
+        val intentA = mockk<Intent>()
+        val intentB = mockk<Intent>()
+
+        every { processor.process(intentA) } returns SharedCaptureResult.Ready(draftA())
+        coEvery { repository.findExactUrlDuplicates("https://a.com", null) } returns emptyList()
+        coEvery { repository.save(any()) } coAnswers { kotlinx.coroutines.delay(10_000) }
+
+        viewModel.processIntent(intentA)
+        advanceUntilIdle()
+        viewModel.save()
+
+        every { processor.process(intentB) } returns SharedCaptureResult.Ready(draftB())
+        viewModel.processIntent(intentB)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            repository.save(match { it.originalContent == "https://a.com" })
+        }
     }
 
     @Test
     fun `save with note includes note in saved item`() = runTest {
         every { processor.process(any()) } returns SharedCaptureResult.Ready(
-            draft = CaptureDraft("content with https://a.com", "https://a.com", listOf("https://a.com"), null, null, CaptureType.URL_WITH_TEXT)
+            CaptureDraft("content with https://a.com", "https://a.com", listOf("https://a.com"), null, null, CaptureType.URL_WITH_TEXT)
         )
         coEvery { repository.findExactUrlDuplicates(any(), any()) } returns emptyList()
         coEvery { repository.save(any()) } returns Unit
@@ -163,17 +209,13 @@ class ShareCaptureViewModelTest {
         viewModel.save()
         advanceUntilIdle()
 
-        coVerify {
-            repository.save(match {
-                it.note == "my note" && it.originalContent == "content with https://a.com"
-            })
-        }
+        coVerify { repository.save(match { it.note == "my note" }) }
     }
 
     @Test
     fun `save with blank note stores null`() = runTest {
         every { processor.process(any()) } returns SharedCaptureResult.Ready(
-            draft = CaptureDraft("text", null, emptyList(), null, null, CaptureType.TEXT)
+            CaptureDraft("text", null, emptyList(), null, null, CaptureType.TEXT)
         )
         coEvery { repository.findExactUrlDuplicates(any(), any()) } returns emptyList()
         coEvery { repository.save(any()) } returns Unit
@@ -184,15 +226,13 @@ class ShareCaptureViewModelTest {
         viewModel.save()
         advanceUntilIdle()
 
-        coVerify {
-            repository.save(match { it.note == null })
-        }
+        coVerify { repository.save(match { it.note == null }) }
     }
 
     @Test
     fun `repeated Save taps produce one repository call`() = runTest {
         every { processor.process(any()) } returns SharedCaptureResult.Ready(
-            draft = CaptureDraft("text", null, emptyList(), null, null, CaptureType.TEXT)
+            CaptureDraft("text", null, emptyList(), null, null, CaptureType.TEXT)
         )
         coEvery { repository.findExactUrlDuplicates(any(), any()) } returns emptyList()
         coEvery { repository.save(any()) } returns Unit
@@ -208,33 +248,46 @@ class ShareCaptureViewModelTest {
     }
 
     @Test
-    fun `save failure sets Failed state`() = runTest {
+    fun `save failure sets Failed state retaining draft note and duplicate`() = runTest {
+        val dup = DuplicateCaptureWarning("dup-1", 500L, 2)
         every { processor.process(any()) } returns SharedCaptureResult.Ready(
-            draft = CaptureDraft("text", null, emptyList(), null, null, CaptureType.TEXT)
+            CaptureDraft("https://x.com", "https://x.com", listOf("https://x.com"), null, null, CaptureType.URL)
         )
-        coEvery { repository.findExactUrlDuplicates(any(), any()) } returns emptyList()
+        coEvery { repository.findExactUrlDuplicates(any(), any()) } returns listOf(
+            dupItem("dup-1", "https://x.com", 500L)
+        )
         coEvery { repository.save(any()) } throws RuntimeException("DB error")
 
         viewModel.processIntent(mockk())
         advanceUntilIdle()
+
+        viewModel.updateNote("important note")
+        val readyBeforeSave = viewModel.uiState.value as ShareCaptureUiState.Ready
+        val dupBeforeSave = readyBeforeSave.duplicate
+
         viewModel.save()
         advanceUntilIdle()
 
-        val state = viewModel.uiState.value
-        assertTrue(state is ShareCaptureUiState.Failed)
-        assertNotNull((state as ShareCaptureUiState.Failed).draft)
+        val state = viewModel.uiState.value as ShareCaptureUiState.Failed
+        assertEquals("important note", state.note)
+        assertEquals(dupBeforeSave?.existingCaptureId, state.duplicate?.existingCaptureId)
+        assertEquals("https://x.com", state.draft.primaryUrl)
     }
 
     @Test
-    fun `retry after failure returns to Ready state`() = runTest {
+    fun `retry restores Ready with retained note and duplicate`() = runTest {
+        val dup = DuplicateCaptureWarning("dup-1", 500L, 2)
         every { processor.process(any()) } returns SharedCaptureResult.Ready(
-            draft = CaptureDraft("text", null, emptyList(), null, null, CaptureType.TEXT)
+            CaptureDraft("https://x.com", "https://x.com", listOf("https://x.com"), null, null, CaptureType.URL)
         )
-        coEvery { repository.findExactUrlDuplicates(any(), any()) } returns emptyList()
+        coEvery { repository.findExactUrlDuplicates(any(), any()) } returns listOf(
+            dupItem("dup-1", "https://x.com", 500L)
+        )
         coEvery { repository.save(any()) } throws RuntimeException("DB error")
 
         viewModel.processIntent(mockk())
         advanceUntilIdle()
+        viewModel.updateNote("my note")
         viewModel.save()
         advanceUntilIdle()
 
@@ -243,42 +296,73 @@ class ShareCaptureViewModelTest {
         coEvery { repository.save(any()) } returns Unit
 
         viewModel.retry()
+
+        val state = viewModel.uiState.value as ShareCaptureUiState.Ready
+        assertEquals("my note", state.note)
+        assertNotNull(state.duplicate)
+        assertEquals("dup-1", state.duplicate?.existingCaptureId)
+        assertEquals("https://x.com", state.draft.primaryUrl)
+    }
+
+    @Test
+    fun `successful retry saves the retained note`() = runTest {
+        every { processor.process(any()) } returns SharedCaptureResult.Ready(
+            CaptureDraft("https://x.com", "https://x.com", listOf("https://x.com"), null, null, CaptureType.URL)
+        )
+        coEvery { repository.findExactUrlDuplicates(any(), any()) } returns emptyList()
+
+        var shouldFail = true
+        coEvery { repository.save(any()) } coAnswers {
+            if (shouldFail) throw RuntimeException("DB error")
+        }
+
+        viewModel.processIntent(mockk())
+        advanceUntilIdle()
+        viewModel.updateNote("retry note")
+        viewModel.save()
         advanceUntilIdle()
 
-        val state = viewModel.uiState.value
-        assertTrue(state is ShareCaptureUiState.Ready)
+        assertTrue(viewModel.uiState.value is ShareCaptureUiState.Failed)
+
+        shouldFail = false
+        viewModel.retry()
+        viewModel.save()
+        advanceUntilIdle()
+
+        coVerify {
+            repository.save(match { it.note == "retry note" })
+        }
+        assertTrue(viewModel.uiState.value is ShareCaptureUiState.Saved)
+    }
+
+    @Test
+    fun `original content unchanged through failure and retry`() = runTest {
+        every { processor.process(any()) } returns SharedCaptureResult.Ready(
+            CaptureDraft("original text", null, emptyList(), null, null, CaptureType.TEXT)
+        )
+        coEvery { repository.findExactUrlDuplicates(any(), any()) } returns emptyList()
+        coEvery { repository.save(any()) } throws RuntimeException("DB error")
+
+        viewModel.processIntent(mockk())
+        advanceUntilIdle()
+        viewModel.save()
+        advanceUntilIdle()
+
+        coEvery { repository.save(any()) } returns Unit
+        viewModel.retry()
+        viewModel.save()
+        advanceUntilIdle()
+
+        coVerify {
+            repository.save(match { it.originalContent == "original text" })
+        }
     }
 
     @Test
     fun `duplicate found shows warning`() = runTest {
-        every { processor.process(any()) } returns SharedCaptureResult.Ready(
-            draft = CaptureDraft(
-                originalContent = "https://example.com",
-                primaryUrl = "https://example.com",
-                detectedUrls = listOf("https://example.com"),
-                sourcePackageName = null,
-                sourceLabel = null,
-                captureType = CaptureType.URL
-            )
-        )
-        coEvery { repository.findExactUrlDuplicates("https://example.com", null) } returns listOf(
-            CaptureItem(
-                id = "dup-1",
-                createdAtEpochMillis = 1000L,
-                updatedAtEpochMillis = 1000L,
-                originalContent = "old",
-                primaryUrl = "https://example.com",
-                detectedUrls = emptyList(),
-                sourcePackageName = null,
-                sourceLabel = null,
-                note = null,
-                captureType = CaptureType.URL,
-                status = uk.co.pcgsoft.tracecapture.domain.CaptureStatus.PENDING,
-                syncStatus = uk.co.pcgsoft.tracecapture.domain.SyncStatus.LOCAL_ONLY,
-                duplicateOfId = null,
-                archivedAtEpochMillis = null,
-                deletedAtEpochMillis = null
-            )
+        every { processor.process(any()) } returns SharedCaptureResult.Ready(draftA())
+        coEvery { repository.findExactUrlDuplicates("https://a.com", null) } returns listOf(
+            dupItem("dup-1", "https://a.com", 1000L)
         )
 
         viewModel.processIntent(mockk())
@@ -292,10 +376,8 @@ class ShareCaptureViewModelTest {
 
     @Test
     fun `no duplicate found does not show warning`() = runTest {
-        every { processor.process(any()) } returns SharedCaptureResult.Ready(
-            draft = CaptureDraft("https://example.com", "https://example.com", listOf("https://example.com"), null, null, CaptureType.URL)
-        )
-        coEvery { repository.findExactUrlDuplicates("https://example.com", null) } returns emptyList()
+        every { processor.process(any()) } returns SharedCaptureResult.Ready(draftA())
+        coEvery { repository.findExactUrlDuplicates("https://a.com", null) } returns emptyList()
 
         viewModel.processIntent(mockk())
         advanceUntilIdle()
@@ -307,7 +389,7 @@ class ShareCaptureViewModelTest {
     @Test
     fun `text-only capture skips duplicate check`() = runTest {
         every { processor.process(any()) } returns SharedCaptureResult.Ready(
-            draft = CaptureDraft("just text", null, emptyList(), null, null, CaptureType.TEXT)
+            CaptureDraft("just text", null, emptyList(), null, null, CaptureType.TEXT)
         )
 
         viewModel.processIntent(mockk())
@@ -317,14 +399,35 @@ class ShareCaptureViewModelTest {
     }
 
     @Test
-    fun `multiple duplicates selects newest date`() = runTest {
-        every { processor.process(any()) } returns SharedCaptureResult.Ready(
-            draft = CaptureDraft("https://example.com", "https://example.com", listOf("https://example.com"), null, null, CaptureType.URL)
+    fun `stale duplicate result does not apply to new draft`() = runTest {
+        val intentA = mockk<Intent>()
+        val intentB = mockk<Intent>()
+
+        every { processor.process(intentA) } returns SharedCaptureResult.Ready(draftA())
+        coEvery { repository.findExactUrlDuplicates("https://a.com", null) } returns listOf(
+            dupItem("dup-a", "https://a.com", 1000L)
         )
-        coEvery { repository.findExactUrlDuplicates("https://example.com", null) } returns listOf(
-            CaptureItem("old", 100L, 100L, "old", "https://example.com", emptyList(), null, null, null, CaptureType.URL, uk.co.pcgsoft.tracecapture.domain.CaptureStatus.PENDING, uk.co.pcgsoft.tracecapture.domain.SyncStatus.LOCAL_ONLY, null, null, null),
-            CaptureItem("new", 500L, 500L, "new", "https://example.com", emptyList(), null, null, null, CaptureType.URL, uk.co.pcgsoft.tracecapture.domain.CaptureStatus.PENDING, uk.co.pcgsoft.tracecapture.domain.SyncStatus.LOCAL_ONLY, null, null, null),
-            CaptureItem("mid", 300L, 300L, "mid", "https://example.com", emptyList(), null, null, null, CaptureType.URL, uk.co.pcgsoft.tracecapture.domain.CaptureStatus.PENDING, uk.co.pcgsoft.tracecapture.domain.SyncStatus.LOCAL_ONLY, null, null, null)
+
+        viewModel.processIntent(intentA)
+
+        every { processor.process(intentB) } returns SharedCaptureResult.Ready(draftB())
+        coEvery { repository.findExactUrlDuplicates("https://b.com", null) } returns emptyList()
+
+        viewModel.processIntent(intentB)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value as ShareCaptureUiState.Ready
+        assertEquals("https://b.com", state.draft.primaryUrl)
+        assertNull(state.duplicate)
+    }
+
+    @Test
+    fun `multiple duplicates selects newest date`() = runTest {
+        every { processor.process(any()) } returns SharedCaptureResult.Ready(draftA())
+        coEvery { repository.findExactUrlDuplicates("https://a.com", null) } returns listOf(
+            dupItem("old", "https://a.com", 100L),
+            dupItem("new", "https://a.com", 500L),
+            dupItem("mid", "https://a.com", 300L)
         )
 
         viewModel.processIntent(mockk())
@@ -340,7 +443,7 @@ class ShareCaptureViewModelTest {
     @Test
     fun `saved item has correct domain properties`() = runTest {
         every { processor.process(any()) } returns SharedCaptureResult.Ready(
-            draft = CaptureDraft(
+            CaptureDraft(
                 originalContent = "https://example.com",
                 primaryUrl = "https://example.com",
                 detectedUrls = listOf("https://example.com"),
@@ -359,8 +462,8 @@ class ShareCaptureViewModelTest {
 
         coVerify {
             repository.save(match {
-                it.status == uk.co.pcgsoft.tracecapture.domain.CaptureStatus.PENDING &&
-                it.syncStatus == uk.co.pcgsoft.tracecapture.domain.SyncStatus.LOCAL_ONLY &&
+                it.status == CaptureStatus.PENDING &&
+                it.syncStatus == SyncStatus.LOCAL_ONLY &&
                 it.captureType == CaptureType.URL &&
                 it.sourcePackageName == "com.example.app"
             })
