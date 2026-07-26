@@ -70,17 +70,32 @@ confirmation. A future settings phase may add configurable quick-save.
 
 ## ViewModel ownership
 
-`ShareCaptureViewModel` is a Hilt ViewModel injected into
-`ShareReceiverActivity`. It owns:
-- The `ShareCaptureUiState` flow (Loading → Ready/Invalid → Saved/Failed)
-- Intent processing (via `SharedCaptureProcessor`)
-- Note editing state
-- Duplicate lookup (async, non-blocking)
-- Save coordination (factory → repository)
-- Retry logic after failure
+- `ShareCaptureViewModel`: Injected into `ShareReceiverActivity`. Owns intent processing, note editing, and save coordination for new captures.
+- `InboxViewModel`: Injected into `InboxScreen`. Owns inbox filtering, search, and status mutation coordination (mark reviewed, archive, restore, delete).
 
 The composable observes `uiState` and renders the appropriate screen. No Room
 access or domain construction happens in the composable layer.
+
+## Inbox and Search
+
+The `InboxScreen` provides a view of all non-deleted captures. It supports:
+- **Filtering**: By status (Pending, Reviewed, Archived) or All.
+- **Search**: Case-insensitive search across original content, primary URL, note, and source label.
+- **Observation**: Uses Room Flows to provide a live-updating list that reacts to external changes and internal actions.
+
+The `InboxViewModel` combines filter and search states with repository flows to produce the final `InboxUiState`. Search results are filtered by the active status selection to ensure consistency.
+
+## Capture Actions
+
+Captures in the inbox can be managed via an overflow menu:
+- **Mark Reviewed**: Moves a capture from Pending to Reviewed status.
+- **Archive**: Moves a capture to Archived status.
+- **Restore**: Moves a Reviewed or Archived capture back to Pending.
+- **Delete**: Soft-deletes the capture after user confirmation.
+- **Open URL**: Opens the primary URL in a compatible external application.
+- **Copy URL**: Copies the primary URL to the system clipboard with user confirmation.
+
+All status changes and deletions are handled through the `CaptureRepository`, ensuring Room remains the single source of truth.
 
 ## Room as local source of truth
 

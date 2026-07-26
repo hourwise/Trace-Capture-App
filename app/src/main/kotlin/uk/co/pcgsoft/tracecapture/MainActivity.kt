@@ -20,6 +20,9 @@ class MainActivity : ComponentActivity() {
             TraceCaptureTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     uk.co.pcgsoft.tracecapture.inbox.InboxScreen(
+                        onCaptureSelected = { captureId ->
+                            // Phase 5 navigation boundary
+                        },
                         modifier = Modifier.padding(innerPadding)
                     )
                 }

@@ -28,7 +28,7 @@ sealed interface ShareCaptureUiState {
         val draft: CaptureDraft,
         val note: String,
         val duplicate: DuplicateCaptureWarning?,
-        val message: String
+        val messageResId: Int
     ) : ShareCaptureUiState
 }
 
@@ -113,7 +113,7 @@ class ShareCaptureViewModel @Inject constructor(
                         draft = draftToSave,
                         note = state.note,
                         duplicate = currentState.duplicate,
-                        message = "TRACE Capture could not save this item. Nothing was lost; try again."
+                        messageResId = uk.co.pcgsoft.tracecapture.R.string.save_failed
                     )
                 }
             }

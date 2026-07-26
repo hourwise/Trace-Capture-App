@@ -111,7 +111,7 @@ private fun QuickCaptureScreen(
             )
             is ShareCaptureUiState.Saved -> SavedConfirmation()
             is ShareCaptureUiState.Failed -> FailedContent(
-                message = s.message,
+                message = stringResource(s.messageResId),
                 onRetry = onRetry,
                 onCancel = onCancel
             )
@@ -185,7 +185,7 @@ private fun ReadyContent(
     if (draft.detectedUrls.size > 1) {
         Spacer(Modifier.height(4.dp))
         Text(
-            text = stringResource(uk.co.pcgsoft.tracecapture.R.string.urls_found, draft.detectedUrls.size),
+            text = stringResource(uk.co.pcgsoft.tracecapture.R.plurals.urls_found, draft.detectedUrls.size, draft.detectedUrls.size),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

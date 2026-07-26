@@ -13,12 +13,16 @@ src/test/                    # Unit tests (JVM, no Android dependency)
     ShareIntentParserTest    # Intent parsing: CharSequence, structured rejection reasons
     SharedCaptureProcessorTest # Orchestration: structured Ready/Rejected results
     ShareCaptureViewModelTest   # ViewModel: intent processing, save, duplicate, note, retry
+  uk.co.pcgsoft.tracecapture.inbox
+    InboxViewModelTest       # ViewModel: filtering, search, status actions, soft delete
 
 src/androidTest/             # Instrumented tests (Android device/emulator)
   uk.co.pcgsoft.tracecapture.data.local
     CaptureItemDaoTest       # Room database operations with in-memory DB
   uk.co.pcgsoft.tracecapture.capture
     ShareReceiverActivityTest # Quick-capture UI rendering (Hilt + Compose)
+  uk.co.pcgsoft.tracecapture.inbox
+    InboxScreenTest          # Inbox UI rendering, search, filters, actions (Hilt + Compose)
 ```
 
 ## Running tests
@@ -47,6 +51,7 @@ src/androidTest/             # Instrumented tests (Android device/emulator)
 | `ShareIntentParserTest` | CharSequence extra, structured rejection reasons (6 reasons), success cases |
 | `SharedCaptureProcessorTest` | Structured Ready/Rejected results, all rejection propagations |
 | `ShareCaptureViewModelTest` | Intent processing, note editing (2000-char enforcement), save workflow, duplicate detection (newest selected, text-only skips), repeated-save guard, failure/retry, domain properties of saved item |
+| `InboxViewModelTest` | Default filter, filter changes, search functionality, status mutations (mark reviewed, archive, restore), soft delete confirmation, action progress guard, error handling, live Room updates |
 
 ## Database tests
 
@@ -74,7 +79,6 @@ ephemeral database for each test. Tests cover:
 
 ## What is not yet tested
 
-- Inbox Compose rendering (Phase 4)
 - Capture detail editing (Phase 5)
 - Export (Phase 6)
 - Settings (Phase 7)
@@ -82,6 +86,17 @@ ephemeral database for each test. Tests cover:
 These will be added in their respective phases.
 
 ## Coverage expectations
+
+Phase 4 covered:
+- Inbox observation from Room (Flow-based)
+- Filtering by status (Pending, Reviewed, Archived, All)
+- Text search across content, URLs, notes, and labels
+- Capture card rendering with UK date/time and source labels
+- Status actions: mark reviewed, archive, restore
+- Soft deletion with user confirmation
+- URL interactions: external opening and clipboard copy
+- Empty states and initial loading
+- Phase 3 message cleanup
 
 Phase 3 targets unit test coverage for:
 - CharSequence shared content
@@ -132,6 +147,47 @@ For each source:
 9. Reopening TRACE Capture later (Phase 4 inbox) can read the stored record
 
 Do not add platform-specific scraping to fix unusual share text from any source.
+
+## Phase 4 Manual Verification Checklist
+
+1. **Quick-capture check**:
+   - Share a link to TRACE Capture and Save it.
+   - Confirm "Saved to TRACE Pending" snackbar appears.
+   
+2. **Inbox Observation**:
+   - Open TRACE Capture normally.
+   - Confirm the saved link appears under **Pending**.
+   
+3. **Filtering**:
+   - Select **All**, **Reviewed**, and **Archived** chips.
+   - Confirm the list updates appropriately (e.g., empty for Reviewed/Archived if nothing was moved yet).
+   
+4. **Search**:
+   - Type part of the URL or content into the search bar.
+   - Confirm the list filters correctly.
+   - Clear search and confirm the full list for the active filter returns.
+   
+5. **Mark Reviewed**:
+   - Tap overflow menu → **Mark reviewed**.
+   - Confirm it disappears from **Pending** and appears under **Reviewed**.
+   
+6. **Archive and Restore**:
+   - Move an item to **Archived**.
+   - Move it back to **Pending** using **Restore**.
+   
+7. **URL Actions**:
+   - Tap overflow menu → **Open URL**. Confirm external browser opens.
+   - Tap overflow menu → **Copy URL**. Confirm "Link copied" snackbar and paste into another app.
+   
+8. **Soft Delete**:
+   - Tap overflow menu → **Delete**.
+   - Confirm dialog appears with "Remove this capture...".
+   - Confirm deletion. Verify item disappears from all filters.
+   
+9. **Accessibility**:
+   - Verify TalkBack announces card details and action menus.
+   - Check touch target sizes for filter chips and overflow icons.
+   - Test with large font scaling.
 
 ## Test guidelines
 
