@@ -11,22 +11,37 @@ class ShareIntentParserImpl @Inject constructor() : ShareIntentParser {
         private const val MAX_CONTENT_LENGTH = 100_000
     }
 
-    override fun parse(intent: Intent): ShareIntentResult? {
-        val action = intent.action
-        if (action != Intent.ACTION_SEND) return null
+    override fun parse(intent: Intent): ShareIntentParseResult {
+        if (intent.action != Intent.ACTION_SEND) {
+            return ShareIntentParseResult.Rejected(ShareRejectionReason.UNSUPPORTED_ACTION)
+        }
 
         val mimeType = intent.type
-        if (mimeType != null && mimeType != "text/plain") return null
+        if (mimeType != null && mimeType != "text/plain") {
+            return ShareIntentParseResult.Rejected(ShareRejectionReason.UNSUPPORTED_MIME_TYPE)
+        }
 
-        val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return null
-        if (text.isBlank()) return null
-        if (text.length > MAX_CONTENT_LENGTH) return null
+        val raw = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)
+        if (raw == null) {
+            return ShareIntentParseResult.Rejected(ShareRejectionReason.MISSING_CONTENT)
+        }
 
-        val sourceHint = intent.getStringExtra(Intent.EXTRA_REFERRER_NAME)
+        val text = raw.toString()
+        if (text.isBlank()) {
+            return ShareIntentParseResult.Rejected(ShareRejectionReason.BLANK_CONTENT)
+        }
 
-        return ShareIntentResult(
-            textContent = text,
-            sourcePackageHint = sourceHint
+        if (text.length > MAX_CONTENT_LENGTH) {
+            return ShareIntentParseResult.Rejected(ShareRejectionReason.CONTENT_TOO_LONG)
+        }
+
+        val hint = intent.getStringExtra(Intent.EXTRA_REFERRER_NAME)
+
+        return ShareIntentParseResult.Success(
+            content = SharedContent(
+                textContent = text,
+                sourcePackageHint = hint
+            )
         )
     }
 }

@@ -11,18 +11,25 @@ class SharedCaptureProcessorImpl @Inject constructor(
     private val sourceResolver: SourceApplicationResolver
 ) : SharedCaptureProcessor {
 
-    override fun process(intent: Intent): CaptureDraft? {
-        val parseResult = intentParser.parse(intent) ?: return null
-        val extraction = urlExtractor.extractUrls(parseResult.textContent)
-        val sourceInfo = sourceResolver.resolve(parseResult.sourcePackageHint)
+    override fun process(intent: Intent): SharedCaptureResult {
+        val parseResult = intentParser.parse(intent)
+        val result = parseResult as? ShareIntentParseResult.Success
+            ?: return SharedCaptureResult.Rejected(
+                (parseResult as ShareIntentParseResult.Rejected).reason
+            )
 
-        return CaptureDraft(
-            originalContent = parseResult.textContent,
-            primaryUrl = extraction.primaryUrl,
-            detectedUrls = extraction.urls,
-            sourcePackageName = sourceInfo.packageName,
-            sourceLabel = sourceInfo.displayLabel,
-            captureType = extraction.captureType
+        val extraction = urlExtractor.extractUrls(result.content.textContent)
+        val sourceInfo = sourceResolver.resolve(result.content.sourcePackageHint)
+
+        return SharedCaptureResult.Ready(
+            draft = CaptureDraft(
+                originalContent = result.content.textContent,
+                primaryUrl = extraction.primaryUrl,
+                detectedUrls = extraction.urls,
+                sourcePackageName = sourceInfo.packageName,
+                sourceLabel = sourceInfo.displayLabel,
+                captureType = extraction.captureType
+            )
         )
     }
 }

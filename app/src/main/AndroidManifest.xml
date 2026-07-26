@@ -22,8 +22,7 @@
             android:name=".capture.ShareReceiverActivity"
             android:exported="true"
             android:theme="@style/Theme.TraceCapture"
-            android:excludeFromRecents="true"
-            android:noHistory="true">
+            android:excludeFromRecents="true">
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />

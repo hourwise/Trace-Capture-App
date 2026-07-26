@@ -12,7 +12,7 @@ Single-module project with clear package boundaries:
 
 ```
 uk.co.pcgsoft.tracecapture
-├── capture/          # Share intent receiver, intent parsing, URL extraction
+├── capture/          # Share intent receiver, ViewModel, intent parsing, URL extraction, quick-capture UI
 ├── data/
 │   ├── local/        # Room database, DAO, entities, type converters, mapper
 │   ├── repository/   # CaptureRepository interface + Room implementation
@@ -29,20 +29,58 @@ uk.co.pcgsoft.tracecapture
 
 ```
 Share menu → ShareReceiverActivity
-                ↓
-         SharedCaptureProcessor
-           ├── ShareIntentParser      (validate + extract text)
-           ├── UrlExtractor           (find, normalise, classify URLs)
-           └── SourceApplicationResolver  (resolve sending app)
-                ↓
-            CaptureDraft              (Phase 2 — diagnostic preview only)
-                ↓
-         CaptureItemFactory → CaptureRepository   (Phase 3+)
-                                ↓
-                            Room DAO
-                                ↓
-                        TraceCaptureDatabase
+                │  onNewIntent replaces draft
+                ▼
+         ShareCaptureViewModel  (Hilt, viewModelScope)
+           ├── SharedCaptureProcessor
+           │     ├── ShareIntentParser      (CharSequence, structured results)
+           │     ├── UrlExtractor           (find, normalise, classify URLs)
+           │     └── SourceApplicationResolver  (resolve sending app)
+           │     ↓
+           │   CaptureDraft (transient, not persisted directly)
+           │
+           ├── CaptureRepository.findExactUrlDuplicates  (non-blocking warning)
+           │
+           └── On Save:
+                CaptureDraft → CaptureItemFactory → CaptureRepository.save()
+                                                           ↓
+                                                       Room DAO
+                                                           ↓
+                                                   TraceCaptureDatabase
 ```
+
+## Explicit confirmation before persistence
+
+TRACE Capture always shows a preview screen before saving. The user must
+explicitly press Save. No capture is stored in Room without explicit
+confirmation. A future settings phase may add configurable quick-save.
+
+## Capture workflow
+
+1. User shares text/URL from another app → `ShareReceiverActivity` launches
+2. `ShareCaptureViewModel.processIntent()` runs the processor pipeline
+3. Structured results: `SharedCaptureResult.Ready` or `.Rejected`
+4. On `Ready`: UI shows preview with source label, primary domain, content
+   preview, note field, duplicate warning (if applicable), Save/Cancel buttons
+5. On Save: `CaptureItemFactory` creates a domain `CaptureItem` (PENDING,
+   LOCAL_ONLY, UUID), then `CaptureRepository.save()` persists via Room
+6. Success → brief "Saved to TRACE Pending" → activity finishes
+7. Failure → error card with Retry
+8. Cancel → no database write, activity finishes
+
+## ViewModel ownership
+
+`ShareCaptureViewModel` is a Hilt ViewModel injected into
+`ShareReceiverActivity`. It owns:
+- The `ShareCaptureUiState` flow (Loading → Ready/Invalid → Saved/Failed)
+- Intent processing (via `SharedCaptureProcessor`)
+- Note editing state
+- Duplicate lookup (async, non-blocking)
+- Save coordination (factory → repository)
+- Retry logic after failure
+
+The composable observes `uiState` and renders the appropriate screen. No Room
+access or domain construction happens in the composable layer.
 
 ## Room as local source of truth
 
@@ -72,25 +110,31 @@ add permanent cleanup.
 
 ## Duplicate detection: warning, not rejection
 
-Duplicate URL detection is local-only in Milestone 1. When a possible duplicate
-is found, the UI shows a warning with the date of the earlier capture. The user
-may still save a new copy. Identical URLs are never silently discarded.
+Duplicate detection runs automatically after a successful parse when
+`primaryUrl` is not null. `CaptureRepository.findExactUrlDuplicates()` is
+called in `viewModelScope` — failure does not block saving.
 
-The duplicate detection interface is designed to be supplemented by server-side
-detection in a future milestone.
+When one or more existing captures share the same `primaryUrl`, the UI shows
+the newest capture's date with UK-locale formatting. The user may still save
+another copy. Identical URLs are never silently discarded or merged.
+
+No URL uniqueness constraint exists at the database level. The duplicate
+detection interface is designed to be supplemented by server-side detection in
+a future milestone.
 
 ## Hilt dependency injection
 
-- `TraceCaptureDatabase` — provided as a singleton
-- `CaptureItemDao` — extracted from the database
-- `CaptureRepository` — bound to `RoomCaptureRepository`
+- `TraceCaptureDatabase` — provided as a singleton (`DataModule`)
+- `CaptureItemDao` — extracted from the database (`DataModule`)
+- `CaptureRepository` — bound to `RoomCaptureRepository` (`DataModule`)
 - `CaptureItemFactory` — injectable utility
 - `CaptureValidator` — injectable validation logic
-- `ShareIntentParser` — bound to `ShareIntentParserImpl`
-- `UrlExtractor` — bound to `UrlExtractorImpl`
-- `SourceApplicationResolver` — bound to `SourceApplicationResolverImpl`
-- `SharedCaptureProcessor` — bound to `SharedCaptureProcessorImpl`
-- `CaptureModule` in the `capture` package provides all Phase 2 bindings
+- `ShareIntentParser` — bound to `ShareIntentParserImpl` (`CaptureModule`)
+- `UrlExtractor` — bound to `UrlExtractorImpl` (`CaptureModule`)
+- `SourceApplicationResolver` — bound to `SourceApplicationResolverImpl` (`CaptureModule`)
+- `SharedCaptureProcessor` — bound to `SharedCaptureProcessorImpl` (`CaptureModule`)
+- `ShareCaptureViewModel` — `@HiltViewModel`, injected into `ShareReceiverActivity`
+- `CaptureModule` in the `capture` package provides all Phase 2–3 bindings
 
 ## Future sync boundary
 

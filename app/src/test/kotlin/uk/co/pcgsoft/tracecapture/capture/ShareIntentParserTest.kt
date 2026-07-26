@@ -5,7 +5,7 @@ import io.mockk.every
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ShareIntentParserTest {
@@ -17,13 +17,13 @@ class ShareIntentParserTest {
         val intent = mockk<Intent> {
             every { action } returns Intent.ACTION_SEND
             every { type } returns "text/plain"
-            every { getStringExtra(Intent.EXTRA_TEXT) } returns "https://example.com"
+            every { getCharSequenceExtra(Intent.EXTRA_TEXT) } returns "https://example.com"
             every { getStringExtra(Intent.EXTRA_REFERRER_NAME) } returns null
         }
         val result = parser.parse(intent)
-        assertNotNull(result)
-        assertEquals("https://example.com", result?.textContent)
-        assertNull(result?.sourcePackageHint)
+        assertTrue(result is ShareIntentParseResult.Success)
+        val success = result as ShareIntentParseResult.Success
+        assertEquals("https://example.com", success.content.textContent)
     }
 
     @Test
@@ -31,12 +31,25 @@ class ShareIntentParserTest {
         val intent = mockk<Intent> {
             every { action } returns Intent.ACTION_SEND
             every { type } returns null
-            every { getStringExtra(Intent.EXTRA_TEXT) } returns "hello"
+            every { getCharSequenceExtra(Intent.EXTRA_TEXT) } returns "hello"
             every { getStringExtra(Intent.EXTRA_REFERRER_NAME) } returns null
         }
         val result = parser.parse(intent)
-        assertNotNull(result)
-        assertEquals("hello", result?.textContent)
+        assertTrue(result is ShareIntentParseResult.Success)
+    }
+
+    @Test
+    fun `parse with CharSequence extra`() {
+        val intent = mockk<Intent> {
+            every { action } returns Intent.ACTION_SEND
+            every { type } returns "text/plain"
+            every { getCharSequenceExtra(Intent.EXTRA_TEXT) } returns StringBuilder("shared text")
+            every { getStringExtra(Intent.EXTRA_REFERRER_NAME) } returns null
+        }
+        val result = parser.parse(intent)
+        assertTrue(result is ShareIntentParseResult.Success)
+        val success = result as ShareIntentParseResult.Success
+        assertEquals("shared text", success.content.textContent)
     }
 
     @Test
@@ -44,7 +57,19 @@ class ShareIntentParserTest {
         val intent = mockk<Intent> {
             every { action } returns Intent.ACTION_VIEW
         }
-        assertNull(parser.parse(intent))
+        val result = parser.parse(intent)
+        assertTrue(result is ShareIntentParseResult.Rejected)
+        assertEquals(ShareRejectionReason.UNSUPPORTED_ACTION, (result as ShareIntentParseResult.Rejected).reason)
+    }
+
+    @Test
+    fun `reject null action`() {
+        val intent = mockk<Intent> {
+            every { action } returns null
+        }
+        val result = parser.parse(intent)
+        assertTrue(result is ShareIntentParseResult.Rejected)
+        assertEquals(ShareRejectionReason.UNSUPPORTED_ACTION, (result as ShareIntentParseResult.Rejected).reason)
     }
 
     @Test
@@ -53,7 +78,9 @@ class ShareIntentParserTest {
             every { action } returns Intent.ACTION_SEND
             every { type } returns "image/png"
         }
-        assertNull(parser.parse(intent))
+        val result = parser.parse(intent)
+        assertTrue(result is ShareIntentParseResult.Rejected)
+        assertEquals(ShareRejectionReason.UNSUPPORTED_MIME_TYPE, (result as ShareIntentParseResult.Rejected).reason)
     }
 
     @Test
@@ -61,9 +88,11 @@ class ShareIntentParserTest {
         val intent = mockk<Intent> {
             every { action } returns Intent.ACTION_SEND
             every { type } returns "text/plain"
-            every { getStringExtra(Intent.EXTRA_TEXT) } returns null
+            every { getCharSequenceExtra(Intent.EXTRA_TEXT) } returns null
         }
-        assertNull(parser.parse(intent))
+        val result = parser.parse(intent)
+        assertTrue(result is ShareIntentParseResult.Rejected)
+        assertEquals(ShareRejectionReason.MISSING_CONTENT, (result as ShareIntentParseResult.Rejected).reason)
     }
 
     @Test
@@ -71,22 +100,11 @@ class ShareIntentParserTest {
         val intent = mockk<Intent> {
             every { action } returns Intent.ACTION_SEND
             every { type } returns "text/plain"
-            every { getStringExtra(Intent.EXTRA_TEXT) } returns "   "
-        }
-        assertNull(parser.parse(intent))
-    }
-
-    @Test
-    fun `read source package hint from referrer`() {
-        val intent = mockk<Intent> {
-            every { action } returns Intent.ACTION_SEND
-            every { type } returns "text/plain"
-            every { getStringExtra(Intent.EXTRA_TEXT) } returns "content"
-            every { getStringExtra(Intent.EXTRA_REFERRER_NAME) } returns "com.android.chrome"
+            every { getCharSequenceExtra(Intent.EXTRA_TEXT) } returns "   "
         }
         val result = parser.parse(intent)
-        assertNotNull(result)
-        assertEquals("com.android.chrome", result?.sourcePackageHint)
+        assertTrue(result is ShareIntentParseResult.Rejected)
+        assertEquals(ShareRejectionReason.BLANK_CONTENT, (result as ShareIntentParseResult.Rejected).reason)
     }
 
     @Test
@@ -95,9 +113,11 @@ class ShareIntentParserTest {
         val intent = mockk<Intent> {
             every { action } returns Intent.ACTION_SEND
             every { type } returns "text/plain"
-            every { getStringExtra(Intent.EXTRA_TEXT) } returns longText
+            every { getCharSequenceExtra(Intent.EXTRA_TEXT) } returns longText
         }
-        assertNull(parser.parse(intent))
+        val result = parser.parse(intent)
+        assertTrue(result is ShareIntentParseResult.Rejected)
+        assertEquals(ShareRejectionReason.CONTENT_TOO_LONG, (result as ShareIntentParseResult.Rejected).reason)
     }
 
     @Test
@@ -106,19 +126,35 @@ class ShareIntentParserTest {
         val intent = mockk<Intent> {
             every { action } returns Intent.ACTION_SEND
             every { type } returns "text/plain"
-            every { getStringExtra(Intent.EXTRA_TEXT) } returns longText
+            every { getCharSequenceExtra(Intent.EXTRA_TEXT) } returns longText
             every { getStringExtra(Intent.EXTRA_REFERRER_NAME) } returns null
         }
         val result = parser.parse(intent)
-        assertNotNull(result)
-        assertEquals(100_000, result?.textContent?.length)
+        assertTrue(result is ShareIntentParseResult.Success)
+        val success = result as ShareIntentParseResult.Success
+        assertEquals(100_000, success.content.textContent.length)
     }
 
     @Test
-    fun `parse returns null for null action`() {
+    fun `read source package hint from referrer`() {
         val intent = mockk<Intent> {
-            every { action } returns null
+            every { action } returns Intent.ACTION_SEND
+            every { type } returns "text/plain"
+            every { getCharSequenceExtra(Intent.EXTRA_TEXT) } returns "content"
+            every { getStringExtra(Intent.EXTRA_REFERRER_NAME) } returns "com.android.chrome"
         }
-        assertNull(parser.parse(intent))
+        val result = parser.parse(intent)
+        assertTrue(result is ShareIntentParseResult.Success)
+        val success = result as ShareIntentParseResult.Success
+        assertEquals("com.android.chrome", success.content.sourcePackageHint)
+    }
+
+    @Test
+    fun `structured rejection produce correct user messages`() {
+        val intent = mockk<Intent> {
+            every { action } returns Intent.ACTION_VIEW
+        }
+        val result = parser.parse(intent)
+        assertTrue(result is ShareIntentParseResult.Rejected)
     }
 }
