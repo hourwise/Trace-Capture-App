@@ -8,10 +8,16 @@ src/test/                    # Unit tests (JVM, no Android dependency)
     CaptureItemMapperTest    # Entity ↔ domain mapping
     CaptureItemFactoryTest   # Factory defaults, UUID, timestamps
     CaptureValidatorTest     # Validation rules
+  uk.co.pcgsoft.tracecapture.capture
+    UrlExtractorTest         # URL extraction, normalisation, classification, punctuation trimming
+    ShareIntentParserTest    # Intent parsing: ACTION_SEND, MIME, content limits
+    SharedCaptureProcessorTest # Orchestration: parser + extractor + resolver
 
 src/androidTest/             # Instrumented tests (Android device/emulator)
   uk.co.pcgsoft.tracecapture.data.local
     CaptureItemDaoTest       # Room database operations with in-memory DB
+  uk.co.pcgsoft.tracecapture.capture
+    ShareReceiverActivityTest # Diagnostic UI rendering (Hilt + Compose)
 ```
 
 ## Running tests
@@ -64,19 +70,22 @@ ephemeral database for each test. Tests cover:
 
 ## What is not yet tested
 
-- Share intent reception (Phase 2)
 - Quick-capture UI (Phase 3)
 - Inbox Compose rendering (Phase 4)
 - Capture detail editing (Phase 5)
 - Export (Phase 6)
 - Settings (Phase 7)
-- Integration tests at the Compose level
 
 These will be added in their respective phases.
 
 ## Coverage expectations
 
-Milestone 1 targets unit test coverage for:
+Phase 2 targets unit test coverage for:
+- URL extraction (pattern matching, normalisation, classification, punctuation trimming, dedup, limit)
+- Intent parsing (ACTION_SEND, MIME types, content length limits, null/blank content)
+- Processor orchestration (composition of parser + extractor + resolver)
+
+Phase 1 (Milestone 1) covered:
 - Domain logic (100% of validation paths)
 - Mapping (all entity ↔ domain fields)
 - Factory (all defaults and edge cases)

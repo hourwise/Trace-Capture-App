@@ -12,7 +12,7 @@ Single-module project with clear package boundaries:
 
 ```
 uk.co.pcgsoft.tracecapture
-├── capture/          # Share intent receiver
+├── capture/          # Share intent receiver, intent parsing, URL extraction
 ├── data/
 │   ├── local/        # Room database, DAO, entities, type converters, mapper
 │   ├── repository/   # CaptureRepository interface + Room implementation
@@ -28,11 +28,20 @@ uk.co.pcgsoft.tracecapture
 ## Data flow
 
 ```
-Share menu → ShareReceiverActivity → CaptureItemFactory → CaptureRepository
-                                                              ↓
-                                                         Room DAO
-                                                              ↓
-                                                     TraceCaptureDatabase
+Share menu → ShareReceiverActivity
+                ↓
+         SharedCaptureProcessor
+           ├── ShareIntentParser      (validate + extract text)
+           ├── UrlExtractor           (find, normalise, classify URLs)
+           └── SourceApplicationResolver  (resolve sending app)
+                ↓
+            CaptureDraft              (Phase 2 — diagnostic preview only)
+                ↓
+         CaptureItemFactory → CaptureRepository   (Phase 3+)
+                                ↓
+                            Room DAO
+                                ↓
+                        TraceCaptureDatabase
 ```
 
 ## Room as local source of truth
@@ -77,6 +86,11 @@ detection in a future milestone.
 - `CaptureRepository` — bound to `RoomCaptureRepository`
 - `CaptureItemFactory` — injectable utility
 - `CaptureValidator` — injectable validation logic
+- `ShareIntentParser` — bound to `ShareIntentParserImpl`
+- `UrlExtractor` — bound to `UrlExtractorImpl`
+- `SourceApplicationResolver` — bound to `SourceApplicationResolverImpl`
+- `SharedCaptureProcessor` — bound to `SharedCaptureProcessorImpl`
+- `CaptureModule` in the `capture` package provides all Phase 2 bindings
 
 ## Future sync boundary
 
