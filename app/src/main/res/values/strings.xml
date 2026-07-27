@@ -30,7 +30,16 @@
     <string name="settings">Settings</string>
     <string name="invalid_share">TRACE Capture could not find a usable URL or text in this share.</string>
     <string name="duplicate_warning">This link was captured on %1$s.\nYou can still save another copy.</string>
-    <string name="delete_confirmation">Remove this capture from the inbox?\n\nIt will no longer appear in TRACE Capture.</string>
+    <string name="duplicate_label">Duplicate</string>
+    <string name="delete_confirmation">Remove this capture from the inbox?\n\n\"%1$s\"</string>
+    <string name="action_succeeded_mark_reviewed">Marked as reviewed</string>
+    <string name="action_succeeded_archive">Capture archived</string>
+    <string name="action_succeeded_restore">Capture restored to Pending</string>
+    <string name="action_succeeded_delete">Capture removed</string>
+    <string name="action_failed_mark_reviewed">Could not mark this capture as reviewed</string>
+    <string name="action_failed_archive">Could not archive this capture</string>
+    <string name="action_failed_restore">Could not restore this capture</string>
+    <string name="action_failed_delete">Could not remove this capture</string>
     <string name="from_source">From: %1$s</string>
     <plurals name="urls_found">
         <item quantity="one">1 URL detected</item>
@@ -42,6 +51,6 @@
     <string name="content_too_long">This shared item is too large to save.</string>
     <string name="save_failed">TRACE Capture could not save this item. Nothing was lost; try again.</string>
     <string name="no_app_found">No compatible application found to open this link.</string>
-    <string name="phase5_placeholder">Capture details will be added in the next phase.</string>
+    <string name="capture_actions">Capture actions</string>
     <string name="text_capture_label">Text capture</string>
 </resources>

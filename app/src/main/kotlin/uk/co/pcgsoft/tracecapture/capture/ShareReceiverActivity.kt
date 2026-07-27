@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -185,7 +186,7 @@ private fun ReadyContent(
     if (draft.detectedUrls.size > 1) {
         Spacer(Modifier.height(4.dp))
         Text(
-            text = stringResource(uk.co.pcgsoft.tracecapture.R.plurals.urls_found, draft.detectedUrls.size, draft.detectedUrls.size),
+            text = pluralStringResource(uk.co.pcgsoft.tracecapture.R.plurals.urls_found, draft.detectedUrls.size, draft.detectedUrls.size),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

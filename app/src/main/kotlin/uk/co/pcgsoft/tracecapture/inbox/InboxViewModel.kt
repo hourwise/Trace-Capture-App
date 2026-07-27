@@ -4,18 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import uk.co.pcgsoft.tracecapture.R
 import uk.co.pcgsoft.tracecapture.data.repository.CaptureRepository
 import uk.co.pcgsoft.tracecapture.domain.CaptureItem
 import uk.co.pcgsoft.tracecapture.domain.CaptureStatus
@@ -32,68 +22,67 @@ class InboxViewModel @Inject constructor(
     private val _pendingDelete = MutableStateFlow<CaptureItem?>(null)
     private val _actionInProgressIds = MutableStateFlow<Set<String>>(emptySet())
     private val _message = MutableStateFlow<InboxMessage?>(null)
-    private val _isLoading = MutableStateFlow(true)
+
+    private val _debouncedSearchQuery = _searchQuery
+        .debounce { if (it.isEmpty()) 0 else 250 }
+        .distinctUntilChanged()
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val uiState: StateFlow<InboxUiState> = combine(
-        _isLoading,
-        _filter,
-        _searchQuery.debounce(250),
-        _pendingDelete,
-        _actionInProgressIds,
-        _message
-    ) { args: Array<Any?> ->
-        CombinedParams(
-            isLoading = args[0] as Boolean,
-            filter = args[1] as InboxFilter,
-            searchQuery = args[2] as String,
-            pendingDelete = args[3] as CaptureItem?,
-            actionInProgressIds = args[4] as Set<String>,
-            message = args[5] as InboxMessage?
+        combine(_filter, _searchQuery, _debouncedSearchQuery.onStart { emit("") }) { f, s, ds -> 
+            Triple(f, s, ds) 
+        },
+        combine(_pendingDelete, _actionInProgressIds, _message) { p, a, m -> 
+            Triple(p, a, m) 
+        }
+    ) { t1, t2 ->
+        InternalState(
+            filter = t1.first,
+            searchQuery = t1.second,
+            debouncedSearchQuery = t1.third,
+            pendingDelete = t2.first,
+            actionInProgressIds = t2.second,
+            message = t2.third
         )
-    }.flatMapLatest { params: CombinedParams ->
-        val query = params.searchQuery.trim()
+    }.flatMapLatest { state ->
+        val query = state.debouncedSearchQuery.trim()
         val baseFlow: Flow<List<CaptureItem>> = if (query.isEmpty()) {
-            when (params.filter) {
+            when (state.filter) {
                 InboxFilter.PENDING -> repository.observeByStatus(CaptureStatus.PENDING)
                 InboxFilter.REVIEWED -> repository.observeByStatus(CaptureStatus.REVIEWED)
                 InboxFilter.ARCHIVED -> repository.observeByStatus(CaptureStatus.ARCHIVED)
                 InboxFilter.ALL -> repository.observeInbox()
             }
         } else {
-            repository.search(query)
+            repository.search(query).map { captures ->
+                val statusToFilter: CaptureStatus? = when (state.filter) {
+                    InboxFilter.PENDING -> CaptureStatus.PENDING
+                    InboxFilter.REVIEWED -> CaptureStatus.REVIEWED
+                    InboxFilter.ARCHIVED -> CaptureStatus.ARCHIVED
+                    InboxFilter.ALL -> null
+                }
+                if (statusToFilter != null) {
+                    captures.filter { it.status == statusToFilter }
+                } else {
+                    captures
+                }
+            }
         }
 
         baseFlow.map { captures ->
-            val statusToFilter: CaptureStatus? = when (params.filter) {
-                InboxFilter.PENDING -> CaptureStatus.PENDING
-                InboxFilter.REVIEWED -> CaptureStatus.REVIEWED
-                InboxFilter.ARCHIVED -> CaptureStatus.ARCHIVED
-                InboxFilter.ALL -> null
-            }
-
-            val filtered = if (query.isNotEmpty() && statusToFilter != null) {
-                captures.filter { it.status == statusToFilter }
-            } else {
-                captures
-            }
             InboxUiState(
                 isLoading = false,
-                filter = params.filter,
-                searchQuery = params.searchQuery,
-                captures = filtered,
-                pendingDelete = params.pendingDelete,
-                actionInProgressIds = params.actionInProgressIds,
-                message = params.message
+                filter = state.filter,
+                searchQuery = state.searchQuery,
+                captures = captures,
+                pendingDelete = state.pendingDelete,
+                actionInProgressIds = state.actionInProgressIds,
+                message = state.message
             )
-        }
-    }.onEach { state ->
-        if (_isLoading.value && (state.captures.isNotEmpty() || !state.isLoading)) {
-            _isLoading.value = false
         }
     }.stateIn(
         scope = viewModelScope,
-        started = SharingStarted.Eagerly,
+        started = SharingStarted.WhileSubscribed(5000),
         initialValue = InboxUiState(isLoading = true)
     )
 
@@ -106,15 +95,15 @@ class InboxViewModel @Inject constructor(
     }
 
     fun markReviewed(id: String) {
-        performAction(id) { repository.markReviewed(id) }
+        performAction(id, InboxAction.MARK_REVIEWED) { repository.markReviewed(id) }
     }
 
     fun archive(id: String) {
-        performAction(id) { repository.archive(id) }
+        performAction(id, InboxAction.ARCHIVE) { repository.archive(id) }
     }
 
     fun restoreToPending(id: String) {
-        performAction(id) { repository.restoreToPending(id) }
+        performAction(id, InboxAction.RESTORE) { repository.restoreToPending(id) }
     }
 
     fun onDeleteRequested(item: CaptureItem) {
@@ -124,7 +113,7 @@ class InboxViewModel @Inject constructor(
     fun onDeleteConfirmed() {
         val item = _pendingDelete.value ?: return
         _pendingDelete.value = null
-        performAction(item.id) { repository.softDelete(item.id) }
+        performAction(item.id, InboxAction.DELETE) { repository.softDelete(item.id) }
     }
 
     fun onDeleteCancelled() {
@@ -139,25 +128,26 @@ class InboxViewModel @Inject constructor(
         _message.value = InboxMessage.LinkCopied
     }
 
-    private fun performAction(id: String, action: suspend () -> Unit) {
+    private fun performAction(id: String, actionType: InboxAction, action: suspend () -> Unit) {
         if (_actionInProgressIds.value.contains(id)) return
 
         _actionInProgressIds.value = _actionInProgressIds.value + id
         viewModelScope.launch {
             try {
                 action()
+                _message.value = InboxMessage.ActionSucceeded(actionType)
             } catch (e: Exception) {
-                _message.value = InboxMessage.Error(R.string.save_failed)
+                _message.value = InboxMessage.ActionFailed(actionType)
             } finally {
                 _actionInProgressIds.value = _actionInProgressIds.value - id
             }
         }
     }
 
-    private data class CombinedParams(
-        val isLoading: Boolean,
+    private data class InternalState(
         val filter: InboxFilter,
         val searchQuery: String,
+        val debouncedSearchQuery: String,
         val pendingDelete: CaptureItem?,
         val actionInProgressIds: Set<String>,
         val message: InboxMessage?

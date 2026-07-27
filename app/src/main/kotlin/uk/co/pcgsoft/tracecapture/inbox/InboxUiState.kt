@@ -13,7 +13,14 @@ data class InboxUiState(
 )
 
 sealed interface InboxMessage {
-    data class Info(val messageResId: Int, val formatArgs: List<Any> = emptyList()) : InboxMessage
-    data class Error(val messageResId: Int) : InboxMessage
     data object LinkCopied : InboxMessage
+    data class ActionSucceeded(val action: InboxAction) : InboxMessage
+    data class ActionFailed(val action: InboxAction) : InboxMessage
+}
+
+enum class InboxAction {
+    MARK_REVIEWED,
+    ARCHIVE,
+    RESTORE,
+    DELETE
 }

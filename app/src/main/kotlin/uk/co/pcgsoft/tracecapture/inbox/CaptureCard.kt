@@ -30,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,7 +84,7 @@ fun CaptureCard(
                     IconButton(onClick = { showMenu = true }) {
                         Icon(
                             imageVector = Icons.Default.MoreVert,
-                            contentDescription = "Actions for ${item.id}"
+                            contentDescription = stringResource(R.string.capture_actions)
                         )
                     }
                     CaptureActionMenu(
@@ -118,7 +119,7 @@ fun CaptureCard(
                 if (item.duplicateOfId != null) {
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Duplicate",
+                        text = stringResource(R.string.duplicate_label),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error
                     )
@@ -149,7 +150,7 @@ fun CaptureCard(
             if (item.detectedUrls.size > 1) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = stringResource(R.plurals.urls_found, item.detectedUrls.size, item.detectedUrls.size),
+                    text = pluralStringResource(R.plurals.urls_found, item.detectedUrls.size, item.detectedUrls.size),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )

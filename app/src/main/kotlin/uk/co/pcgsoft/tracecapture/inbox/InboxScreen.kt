@@ -19,9 +19,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import uk.co.pcgsoft.tracecapture.R
 import uk.co.pcgsoft.tracecapture.domain.CaptureItem
 
@@ -31,7 +34,7 @@ fun InboxScreen(
     modifier: Modifier = Modifier,
     viewModel: InboxViewModel = hiltViewModel()
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     InboxContent(
         uiState = uiState,
@@ -73,14 +76,33 @@ fun InboxContent(
     LaunchedEffect(uiState.message) {
         uiState.message?.let { message ->
             val text = when (message) {
-                is InboxMessage.Info -> context.getString(message.messageResId, *message.formatArgs.toTypedArray())
-                is InboxMessage.Error -> context.getString(message.messageResId)
                 InboxMessage.LinkCopied -> context.getString(R.string.link_copied)
+                is InboxMessage.ActionSucceeded -> {
+                    val resId = when (message.action) {
+                        InboxAction.MARK_REVIEWED -> R.string.action_succeeded_mark_reviewed
+                        InboxAction.ARCHIVE -> R.string.action_succeeded_archive
+                        InboxAction.RESTORE -> R.string.action_succeeded_restore
+                        InboxAction.DELETE -> R.string.action_succeeded_delete
+                    }
+                    context.getString(resId)
+                }
+                is InboxMessage.ActionFailed -> {
+                    val resId = when (message.action) {
+                        InboxAction.MARK_REVIEWED -> R.string.action_failed_mark_reviewed
+                        InboxAction.ARCHIVE -> R.string.action_failed_archive
+                        InboxAction.RESTORE -> R.string.action_failed_restore
+                        InboxAction.DELETE -> R.string.action_failed_delete
+                    }
+                    context.getString(resId)
+                }
             }
             snackbarHostState.showSnackbar(text)
             onMessageShown()
         }
     }
+
+    // Handle "Copied URL" for clipboard label - use a constant or resource
+    val clipboardLabel = stringResource(R.string.copy_url)
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -129,7 +151,6 @@ fun InboxContent(
                             item = item,
                             onCaptureSelected = { 
                                 onCaptureSelected(it)
-                                context.showToast(context.getString(R.string.phase5_placeholder))
                             },
                             onMarkReviewed = onMarkReviewed,
                             onArchive = onArchive,
@@ -137,7 +158,7 @@ fun InboxContent(
                             onDelete = onDeleteRequested,
                             onOpenUrl = { url -> context.openUrl(url) },
                             onCopyUrl = { url -> 
-                                context.copyToClipboard(url)
+                                context.copyToClipboard(clipboardLabel, url)
                                 onLinkCopied()
                             }
                         )
@@ -171,7 +192,7 @@ private fun SearchBar(
         trailingIcon = {
             if (query.isNotEmpty()) {
                 IconButton(onClick = { onQueryChange("") }) {
-                    Icon(Icons.Default.Clear, contentDescription = "Clear search")
+                    Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.clear_search))
                 }
             }
         },
@@ -227,6 +248,7 @@ private fun EmptyState(
         )
         
         if (isSearch) {
+            // No Spacer needed if we want it simple, but let's keep it for spacing
             Spacer(modifier = Modifier.height(16.dp))
             Button(onClick = onClearSearch) {
                 Text(stringResource(R.string.clear_search))
@@ -241,11 +263,15 @@ private fun DeleteConfirmationDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val preview = remember(item.originalContent) {
+        val truncated = item.originalContent.take(100)
+        if (item.originalContent.length > 100) "$truncated..." else truncated
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.delete)) },
         text = { 
-            Text(text = stringResource(R.string.delete_confirmation)) 
+            Text(text = stringResource(R.string.delete_confirmation, preview))
         },
         confirmButton = {
             TextButton(onClick = onConfirm) {
@@ -276,12 +302,8 @@ private fun Context.openUrl(url: String) {
     }
 }
 
-private fun Context.copyToClipboard(text: String) {
+private fun Context.copyToClipboard(label: String, text: String) {
     val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    val clip = ClipData.newPlainText("Copied URL", text)
+    val clip = ClipData.newPlainText(label, text)
     clipboard.setPrimaryClip(clip)
-}
-
-private fun Context.showToast(message: String) {
-    Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
 }

@@ -85,4 +85,7 @@ interface CaptureItemDao {
 
     @Query("SELECT COUNT(*) FROM capture_items")
     suspend fun count(): Int
+
+    @Query("DELETE FROM capture_items")
+    suspend fun deleteAll()
 }

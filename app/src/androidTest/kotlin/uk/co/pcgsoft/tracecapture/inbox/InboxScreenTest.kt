@@ -27,11 +27,11 @@ class InboxScreenTest {
     private val testCaptures = listOf(
         CaptureItem(
             id = "1",
+            createdAtEpochMillis = 1722000000000L, // Fixed date for testing
+            updatedAtEpochMillis = 1722000000000L,
             originalContent = "Test Capture 1",
             captureType = CaptureType.TEXT,
             status = CaptureStatus.PENDING,
-            createdAtEpochMillis = System.currentTimeMillis(),
-            updatedAtEpochMillis = System.currentTimeMillis(),
             primaryUrl = null,
             detectedUrls = emptyList(),
             sourcePackageName = null,
@@ -44,11 +44,11 @@ class InboxScreenTest {
         ),
         CaptureItem(
             id = "2",
+            createdAtEpochMillis = 1722000000000L,
+            updatedAtEpochMillis = 1722000000000L,
             originalContent = "Test Capture 2",
             captureType = CaptureType.TEXT,
             status = CaptureStatus.REVIEWED,
-            createdAtEpochMillis = System.currentTimeMillis(),
-            updatedAtEpochMillis = System.currentTimeMillis(),
             primaryUrl = null,
             detectedUrls = emptyList(),
             sourcePackageName = null,
@@ -150,14 +150,16 @@ class InboxScreenTest {
     }
 
     @Test
-    fun filterChips_areDisplayed() {
+    fun deleteDialog_showsPreview() {
+        val itemToDelete = testCaptures[0]
         composeTestRule.setContent {
             TraceCaptureTheme {
                 InboxContent(
                     uiState = InboxUiState(
                         isLoading = false,
-                        captures = emptyList(),
-                        filter = InboxFilter.PENDING
+                        captures = testCaptures,
+                        filter = InboxFilter.ALL,
+                        pendingDelete = itemToDelete
                     ),
                     onCaptureSelected = {},
                     onFilterSelected = {},
@@ -174,9 +176,8 @@ class InboxScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("Pending").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Reviewed").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Archived").assertIsDisplayed()
-        composeTestRule.onNodeWithText("All").assertIsDisplayed()
+        // Verify dialog is shown with preview text
+        composeTestRule.onNodeWithText("Delete").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Test Capture 1", substring = true).assertIsDisplayed()
     }
 }
