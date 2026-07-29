@@ -15,14 +15,20 @@ src/test/                    # Unit tests (JVM, no Android dependency)
     ShareCaptureViewModelTest   # ViewModel: intent processing, save, duplicate, note, retry
   uk.co.pcgsoft.tracecapture.inbox
     InboxViewModelTest       # ViewModel: filtering, search, status actions, soft delete
+  uk.co.pcgsoft.tracecapture.detail
+    CaptureDetailViewModelTest # ViewModel: capture loading, note editing, status actions, delete, unsaved changes
 
 src/androidTest/             # Instrumented tests (Android device/emulator)
   uk.co.pcgsoft.tracecapture.data.local
     CaptureItemDaoTest       # Room database operations with in-memory DB
+    CaptureItemDaoObserveByIdTest # observeById Flow tests: initial, updates, null, soft delete
   uk.co.pcgsoft.tracecapture.capture
     ShareReceiverActivityTest # Quick-capture UI rendering (Hilt + Compose)
   uk.co.pcgsoft.tracecapture.inbox
     InboxScreenTest          # Inbox UI rendering, search, filters, actions (Hilt + Compose)
+  uk.co.pcgsoft.tracecapture.detail
+    CaptureDetailScreenTest  # Detail UI rendering, note, status actions, delete, unsaved changes
+    CaptureDetailIntegrationTest # Detail navigation, state, updates (Hilt + Compose)
 ```
 
 ## Running tests
@@ -79,7 +85,6 @@ ephemeral database for each test. Tests cover:
 
 ## What is not yet tested
 
-- Capture detail editing (Phase 5)
 - Export (Phase 6)
 - Settings (Phase 7)
 
@@ -188,6 +193,29 @@ Do not add platform-specific scraping to fix unusual share text from any source.
    - Verify TalkBack announces card details and action menus.
    - Check touch target sizes for filter chips and overflow icons.
    - Test with large font scaling.
+
+## Phase 5 Manual Verification Checklist
+
+1. Save a text-only capture.
+2. Save a single-URL capture.
+3. Save a multiple-URL capture.
+4. Open the inbox.
+5. Tap each capture and verify the correct detail screen.
+6. Verify full original text is visible.
+7. Open each URL externally.
+8. Copy a URL.
+9. Edit and save a note.
+10. Restart the app and verify the note remains.
+11. Type a note, press Back and verify unsaved-change protection.
+12. Mark a Pending item Reviewed.
+13. Restore a Reviewed item to Pending.
+14. Archive an item.
+15. Restore an Archived item.
+16. Delete an item from detail.
+17. Confirm it disappears from All.
+18. Rotate or recreate the Activity and confirm state remains valid.
+19. Test large font scaling.
+20. Test TalkBack navigation.
 
 ## Test guidelines
 

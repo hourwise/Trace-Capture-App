@@ -53,4 +53,36 @@
     <string name="no_app_found">No compatible application found to open this link.</string>
     <string name="capture_actions">Capture actions</string>
     <string name="text_capture_label">Text capture</string>
+
+    <string name="detail_title">Capture Detail</string>
+    <string name="back">Back</string>
+    <string name="captured_date">Captured %1$s</string>
+    <string name="updated_date">Updated %1$s</string>
+    <string name="original_content">Original Content</string>
+    <string name="primary_url">Primary URL</string>
+    <string name="editorial_note">Editorial Note</string>
+    <string name="save_note">Save Note</string>
+    <string name="char_count">%1$d / 2,000</string>
+    <string name="actions">Actions</string>
+    <string name="copy_content">Copy Content</string>
+    <string name="content_copied">Content copied</string>
+    <string name="restore_to_pending">Restore to Pending</string>
+    <string name="note_saved">Note saved</string>
+    <string name="note_save_failed">Could not save the note</string>
+    <string name="capture_not_found">Capture not found</string>
+    <string name="capture_not_found_detail">It may have been removed.</string>
+    <string name="unsaved_changes_title">Discard note changes?</string>
+    <string name="unsaved_changes_body">Your unsaved changes will be lost.</string>
+    <string name="discard_changes">Discard changes</string>
+    <string name="keep_editing">Keep editing</string>
+    <string name="delete_confirmation_detail">Remove this capture?\n\nIt will no longer appear in TRACE Capture.\n\n\"%1$s\"</string>
+    <string name="sync_local">Local only — not synced</string>
+    <string name="sync_queued">Waiting to sync</string>
+    <string name="sync_syncing">Syncing…</string>
+    <string name="sync_synced">Synced</string>
+    <string name="sync_failed">Sync failed</string>
+    <plurals name="detected_urls">
+        <item quantity="one">1 detected URL</item>
+        <item quantity="other">%1$d detected URLs</item>
+    </plurals>
 </resources>

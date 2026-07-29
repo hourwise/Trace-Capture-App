@@ -31,6 +31,10 @@ class RoomCaptureRepository @Inject constructor(
         return dao.search(query).map { entities -> entities.toDomain() }
     }
 
+    override fun observeById(id: String): Flow<CaptureItem?> {
+        return dao.observeById(id).map { entity -> entity?.toDomain() }
+    }
+
     override suspend fun getById(id: String): CaptureItem? {
         return dao.getById(id)?.toDomain()
     }

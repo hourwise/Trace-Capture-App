@@ -72,9 +72,26 @@ confirmation. A future settings phase may add configurable quick-save.
 
 - `ShareCaptureViewModel`: Injected into `ShareReceiverActivity`. Owns intent processing, note editing, and save coordination for new captures.
 - `InboxViewModel`: Injected into `InboxScreen`. Owns inbox filtering, search, and status mutation coordination (mark reviewed, archive, restore, delete).
+- `CaptureDetailViewModel`: Injected into `CaptureDetailScreen`. Owns capture observation by ID, note editing, status transitions, soft deletion, and unsaved-changes protection.
 
 The composable observes `uiState` and renders the appropriate screen. No Room
 access or domain construction happens in the composable layer.
+
+## Navigation
+
+Navigation Compose provides two routes:
+
+- `inbox` — start destination, renders `InboxScreen`
+- `detail/{captureId}` — renders `CaptureDetailScreen`, receives only the capture ID
+
+Only the capture ID is passed as a navigation argument. The detail screen
+observes the capture from Room by ID, keeping Room as the single source of
+truth. Navigation is defined in `AppRoutes` in `MainActivity.kt`.
+
+`MainActivity` hosts a `NavHost` with both routes. The `InboxScreen` callback
+`onCaptureSelected` triggers navigation to `detail/{captureId}`, replacing the
+Phase 4 placeholder. Back navigation restores the inbox with its natural
+Navigation Compose state preservation.
 
 ## Inbox and Search
 
@@ -157,6 +174,56 @@ All networking is behind the `CaptureSubmissionRequest` /
 `CaptureSubmissionResult` interfaces in the `sync/` package. Milestone 1 does
 not implement any network calls. The local database remains authoritative until
 the server acknowledges a capture submission.
+
+## Capture detail screen
+
+The `CaptureDetailScreen` loads a capture by ID through `CaptureDetailViewModel`,
+which uses `CaptureRepository.observeById(id)` — a Flow-based observation that
+emits the current item immediately, then emits updated values after any Room
+change (note edits, status transitions, soft deletion).
+
+### Note edit and save lifecycle
+
+1. On load, the note draft is initialised from the stored `CaptureItem.note`.
+2. Edits update the draft locally; `noteChanged` is derived by comparing the
+   draft to the stored note.
+3. Save calls `repository.updateNote(id, note)`. Blank/whitespace notes are
+   saved as `null`.
+4. After a successful save, Room observation becomes authoritative — the Flow
+   emits the updated item and `noteChanged` resets.
+5. Save failure preserves the draft so the user can retry.
+
+### Unsaved-changes handling
+
+When the user attempts to navigate away with unsaved note edits, the ViewModel
+shows a confirmation dialog ("Discard note changes?"). This applies to system
+Back, top-app-bar Back, and any explicit navigation-back action. If the note
+is unchanged, navigation proceeds without a dialog.
+
+### Status transitions
+
+The detail screen shows status-specific action buttons matching the inbox
+behaviour. All actions use existing `CaptureRepository` methods
+(`markReviewed`, `archive`, `restoreToPending`) and rely on Room observation
+for UI updates.
+
+### Soft deletion
+
+Delete triggers a confirmation dialog. On confirmation, `repository.softDelete`
+is called. After success, the ViewModel signals navigation back to the inbox.
+The deleted item no longer appears under any inbox filter.
+
+### Typed messages
+
+`CaptureDetailMessage` is a sealed interface with typed success and failure
+cases. The Compose layer maps messages to `strings.xml` in a `LaunchedEffect`.
+No Android resource IDs exist in the ViewModel.
+
+### Missing/deleted capture handling
+
+If the observed `CaptureItem` is null (invalid ID or soft-deleted while
+viewing), the screen shows a stable `Capture not found` state with a message
+that the capture may have been removed. The user can navigate back to the inbox.
 
 ## Key design decisions
 

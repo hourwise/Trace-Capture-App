@@ -8,6 +8,7 @@ interface CaptureRepository {
     fun observeInbox(): Flow<List<CaptureItem>>
     fun observeByStatus(status: CaptureStatus): Flow<List<CaptureItem>>
     fun search(query: String): Flow<List<CaptureItem>>
+    fun observeById(id: String): Flow<CaptureItem?>
 
     suspend fun getById(id: String): CaptureItem?
     suspend fun save(item: CaptureItem)
