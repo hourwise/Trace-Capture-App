@@ -16,7 +16,7 @@ src/test/                    # Unit tests (JVM, no Android dependency)
   uk.co.pcgsoft.tracecapture.inbox
     InboxViewModelTest       # ViewModel: filtering, search, status actions, soft delete
   uk.co.pcgsoft.tracecapture.detail
-    CaptureDetailViewModelTest # ViewModel: capture loading, note editing, status actions, delete, unsaved changes
+    CaptureDetailViewModelTest # ViewModel: route validation, loading lifecycle, notes, status actions, delete, unsaved changes
 
 src/androidTest/             # Instrumented tests (Android device/emulator)
   uk.co.pcgsoft.tracecapture.data.local
@@ -29,6 +29,8 @@ src/androidTest/             # Instrumented tests (Android device/emulator)
   uk.co.pcgsoft.tracecapture.detail
     CaptureDetailScreenTest  # Detail UI rendering, note, status actions, delete, unsaved changes
     CaptureDetailIntegrationTest # Detail navigation, state, updates (Hilt + Compose)
+  uk.co.pcgsoft.tracecapture
+    AppRoutesTest            # Encoded detail IDs round-trip into SavedStateHandle
 ```
 
 ## Running tests
@@ -58,6 +60,7 @@ src/androidTest/             # Instrumented tests (Android device/emulator)
 | `SharedCaptureProcessorTest` | Structured Ready/Rejected results, all rejection propagations |
 | `ShareCaptureViewModelTest` | Intent processing, note editing (2000-char enforcement), save workflow, duplicate detection (newest selected, text-only skips), repeated-save guard, failure/retry, domain properties of saved item |
 | `InboxViewModelTest` | Default filter, filter changes, search functionality, status mutations (mark reviewed, archive, restore), soft delete confirmation, action progress guard, error handling, live Room updates |
+| `CaptureDetailViewModelTest` | Invalid route rejection without repository access, Loading-before-first-emission, missing versus externally removed captures, note-save snapshots, status-transition validation, and one-time navigation consumption |
 
 ## Database tests
 
@@ -81,7 +84,29 @@ ephemeral database for each test. Tests cover:
 - `update` existing item
 - `count` accuracy
 - Empty duplicate results
-- Soft-deleted items hidden from inbox but retrievable by ID
+- Soft-deleted items hidden from inbox and `observeById`, while direct `getById` remains available
+
+## Phase 5 lifecycle guarantees
+
+- A missing or blank detail route ID immediately produces Capture Not Found and
+  does not observe the repository.
+- A valid ID stays Loading until the first Room `observeById` emission.
+- `observeById` emits only active captures; a soft-delete changes an existing
+  detail observation to `null`.
+- A first `null` emission is a stable missing capture. A `null` after a loaded
+  capture is a typed Capture Removed event with one consumed back-navigation
+  request, preserving any unsaved draft until navigation.
+- Detail status actions are restricted to Pending → Reviewed/Archived,
+  Reviewed → Pending/Archived, and Archived → Pending. Invalid transitions do
+  not access the repository or emit success.
+- Detail routes encode IDs, including spaces, slashes, percent signs, and
+  Unicode, before Navigation puts the original value in `SavedStateHandle`.
+
+## Repository hygiene
+
+`.kotlin/` is ignored because it contains local Kotlin compiler diagnostics and
+other generated files. Gradle wrapper files and declared project sources remain
+tracked.
 
 ## What is not yet tested
 

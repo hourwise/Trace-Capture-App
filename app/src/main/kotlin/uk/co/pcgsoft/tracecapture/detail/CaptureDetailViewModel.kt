@@ -17,38 +17,69 @@ class CaptureDetailViewModel @Inject constructor(
     private val repository: CaptureRepository
 ) : ViewModel() {
 
-    private val captureId: String = checkNotNull(savedStateHandle.get<String>("captureId")) {
-        "captureId must be set in navigation route"
-    }
+    private val captureId: String? = savedStateHandle.get<String>("captureId")
+        ?.takeIf { it.isNotBlank() }
 
     private val _uiState = MutableStateFlow(CaptureDetailUiState(isLoading = true))
     val uiState: StateFlow<CaptureDetailUiState> = _uiState.asStateFlow()
     private var noteSaveJob: Job? = null
+    private var hasLoadedCapture = false
+    private var removalHandled = false
 
     init {
-        viewModelScope.launch {
-            repository.observeById(captureId)
-                .onStart {
-                    _uiState.update { state ->
-                        state.copy(isLoading = false, isMissing = true)
-                    }
-                }
-                .collect { capture ->
-                    _uiState.update { state ->
-                        val noteDraft = if (state.capture == null || !state.noteChanged) {
-                            capture?.note.orEmpty()
-                        } else {
-                            state.noteDraft
+        val id = captureId
+        if (id == null) {
+            _uiState.value = CaptureDetailUiState(isLoading = false, isMissing = true)
+        } else {
+            viewModelScope.launch {
+                repository.observeById(id).collect { capture ->
+                    when {
+                        capture != null -> updateLoadedCapture(capture)
+                        hasLoadedCapture -> signalCaptureRemoved()
+                        else -> _uiState.update {
+                            it.copy(isLoading = false, isMissing = true, capture = null)
                         }
-                        state.copy(
-                            isLoading = false,
-                            capture = capture,
-                            isMissing = capture == null,
-                            noteDraft = noteDraft,
-                            noteChanged = noteDraft != capture?.note.orEmpty()
-                        )
                     }
                 }
+            }
+        }
+    }
+
+    private fun updateLoadedCapture(capture: uk.co.pcgsoft.tracecapture.domain.CaptureItem) {
+        if (removalHandled) return
+
+        hasLoadedCapture = true
+        _uiState.update { state ->
+            val noteDraft = if (state.capture == null || !state.noteChanged) {
+                capture.note.orEmpty()
+            } else {
+                state.noteDraft
+            }
+            state.copy(
+                isLoading = false,
+                capture = capture,
+                isMissing = false,
+                noteDraft = noteDraft,
+                noteChanged = noteDraft != capture.note.orEmpty()
+            )
+        }
+    }
+
+    private fun signalCaptureRemoved() {
+        if (removalHandled) return
+
+        removalHandled = true
+        _uiState.update { state ->
+            state.copy(
+                isLoading = false,
+                isMissing = false,
+                isSavingNote = false,
+                actionInProgress = null,
+                showDeleteConfirmation = false,
+                showUnsavedChangesDialog = false,
+                message = CaptureDetailMessage.CaptureRemoved,
+                pendingNavigation = true
+            )
         }
     }
 
@@ -66,6 +97,7 @@ class CaptureDetailViewModel @Inject constructor(
     fun onSaveNote() {
         val state = uiState.value
         val capture = state.capture ?: return
+        val captureId = capture.id
         val note = state.noteDraft.trim().ifBlank { null }
         if (state.isSavingNote) return
 
@@ -75,25 +107,34 @@ class CaptureDetailViewModel @Inject constructor(
         noteSaveJob?.cancel()
         noteSaveJob = viewModelScope.launch {
             try {
-                repository.updateNote(capture.id, note)
-                _uiState.update { it.copy(message = CaptureDetailMessage.NoteSaved) }
+                repository.updateNote(captureId, note)
+                if (!removalHandled) {
+                    _uiState.update { it.copy(message = CaptureDetailMessage.NoteSaved) }
+                }
             } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(message = CaptureDetailMessage.ActionFailed(DetailAction.SAVE_NOTE))
+                if (!removalHandled) {
+                    _uiState.update {
+                        it.copy(message = CaptureDetailMessage.ActionFailed(DetailAction.SAVE_NOTE))
+                    }
                 }
             } finally {
-                _uiState.update { it.copy(isSavingNote = false, actionInProgress = null) }
+                if (!removalHandled) {
+                    _uiState.update { it.copy(isSavingNote = false, actionInProgress = null) }
+                }
             }
         }
     }
 
     fun onDeleteRequested() {
-        _uiState.update { it.copy(showDeleteConfirmation = true) }
+        if (uiState.value.capture != null && !removalHandled) {
+            _uiState.update { it.copy(showDeleteConfirmation = true) }
+        }
     }
 
     fun onDeleteConfirmed() {
         val capture = uiState.value.capture ?: return
-        if (uiState.value.actionInProgress != null) return
+        if (uiState.value.actionInProgress != null || removalHandled) return
+        val captureId = capture.id
 
         _uiState.update {
             it.copy(actionInProgress = DetailAction.DELETE, showDeleteConfirmation = false)
@@ -101,19 +142,18 @@ class CaptureDetailViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
-                repository.softDelete(capture.id)
-                _uiState.update {
-                    it.copy(
-                        message = CaptureDetailMessage.CaptureRemoved,
-                        pendingNavigation = true
-                    )
-                }
+                repository.softDelete(captureId)
+                signalCaptureRemoved()
             } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(message = CaptureDetailMessage.ActionFailed(DetailAction.DELETE))
+                if (!removalHandled) {
+                    _uiState.update {
+                        it.copy(message = CaptureDetailMessage.ActionFailed(DetailAction.DELETE))
+                    }
                 }
             } finally {
-                _uiState.update { it.copy(actionInProgress = null) }
+                if (!removalHandled) {
+                    _uiState.update { it.copy(actionInProgress = null) }
+                }
             }
         }
     }
@@ -123,27 +163,34 @@ class CaptureDetailViewModel @Inject constructor(
     }
 
     fun onMarkReviewed() {
+        val capture = uiState.value.capture ?: return
+        if (capture.status != CaptureStatus.PENDING) return
+
         performStatusAction(DetailAction.MARK_REVIEWED) {
-            if (uiState.value.capture?.status == CaptureStatus.PENDING) {
-                repository.markReviewed(captureId)
-            }
+            repository.markReviewed(capture.id)
         }
     }
 
     fun onArchive() {
+        val capture = uiState.value.capture ?: return
+        if (capture.status !in setOf(CaptureStatus.PENDING, CaptureStatus.REVIEWED)) return
+
         performStatusAction(DetailAction.ARCHIVE) {
-            repository.archive(captureId)
+            repository.archive(capture.id)
         }
     }
 
     fun onRestoreToPending() {
+        val capture = uiState.value.capture ?: return
+        if (capture.status !in setOf(CaptureStatus.REVIEWED, CaptureStatus.ARCHIVED)) return
+
         performStatusAction(DetailAction.RESTORE_PENDING) {
-            repository.restoreToPending(captureId)
+            repository.restoreToPending(capture.id)
         }
     }
 
     private fun performStatusAction(action: DetailAction, block: suspend () -> Unit) {
-        if (uiState.value.actionInProgress != null) return
+        if (uiState.value.actionInProgress != null || removalHandled) return
 
         _uiState.update { it.copy(actionInProgress = action) }
         viewModelScope.launch {
@@ -155,11 +202,17 @@ class CaptureDetailViewModel @Inject constructor(
                     DetailAction.RESTORE_PENDING -> CaptureDetailMessage.Restored
                     else -> return@launch
                 }
-                _uiState.update { it.copy(message = message) }
+                if (!removalHandled) {
+                    _uiState.update { it.copy(message = message) }
+                }
             } catch (e: Exception) {
-                _uiState.update { it.copy(message = CaptureDetailMessage.ActionFailed(action)) }
+                if (!removalHandled) {
+                    _uiState.update { it.copy(message = CaptureDetailMessage.ActionFailed(action)) }
+                }
             } finally {
-                _uiState.update { it.copy(actionInProgress = null) }
+                if (!removalHandled) {
+                    _uiState.update { it.copy(actionInProgress = null) }
+                }
             }
         }
     }

@@ -100,14 +100,12 @@ class CaptureItemDaoObserveByIdTest {
         val item = createItem(id = "obs-deleted")
         dao.insert(item.toEntity())
 
-        val before = dao.observeById("obs-deleted").first()
-        assertNotNull(before)
+        assertNotNull(dao.observeById("obs-deleted").first())
 
         dao.softDelete("obs-deleted", System.currentTimeMillis())
 
         val after = dao.observeById("obs-deleted").first()
-        assertNotNull(after)
-        assertNotNull(after!!.deletedAtEpochMillis)
+        assertNull(after)
     }
 
     @Test

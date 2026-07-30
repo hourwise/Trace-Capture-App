@@ -24,7 +24,9 @@ interface CaptureItemDao {
     @Query("SELECT * FROM capture_items WHERE id = :id")
     suspend fun getById(id: String): CaptureItemEntity?
 
-    @Query("SELECT * FROM capture_items WHERE id = :id")
+    @Query(
+        "SELECT * FROM capture_items WHERE id = :id AND deleted_at IS NULL LIMIT 1"
+    )
     fun observeById(id: String): Flow<CaptureItemEntity?>
 
     @Query("SELECT * FROM capture_items WHERE deleted_at IS NULL ORDER BY created_at DESC")

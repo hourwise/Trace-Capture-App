@@ -88,6 +88,11 @@ Only the capture ID is passed as a navigation argument. The detail screen
 observes the capture from Room by ID, keeping Room as the single source of
 truth. Navigation is defined in `AppRoutes` in `MainActivity.kt`.
 
+`AppRoutes.detail()` URI-encodes IDs before putting them in the route. The
+detail ViewModel accepts only non-blank IDs from `SavedStateHandle`; a missing,
+blank, or otherwise malformed argument does not start repository observation
+and renders the existing Capture Not Found screen with Back still available.
+
 `MainActivity` hosts a `NavHost` with both routes. The `InboxScreen` callback
 `onCaptureSelected` triggers navigation to `detail/{captureId}`, replacing the
 Phase 4 placeholder. Back navigation restores the inbox with its natural
@@ -140,6 +145,11 @@ are "soft deleted" by setting `deletedAtEpochMillis`. The inbox queries
 exclude soft-deleted records (`WHERE deleted_at IS NULL`). A future phase may
 add permanent cleanup.
 
+`observeById(id)` has the same active-capture contract: it emits only a
+non-deleted capture, and emits `null` once that capture is soft-deleted.
+`getById(id)` intentionally remains a direct lookup so repository or future
+maintenance work can still inspect a soft-deleted row when needed.
+
 ## Duplicate detection: warning, not rejection
 
 Duplicate detection runs automatically after a successful parse when
@@ -179,8 +189,10 @@ the server acknowledges a capture submission.
 
 The `CaptureDetailScreen` loads a capture by ID through `CaptureDetailViewModel`,
 which uses `CaptureRepository.observeById(id)` — a Flow-based observation that
-emits the current item immediately, then emits updated values after any Room
-change (note edits, status transitions, soft deletion).
+emits the current active item, then emits updated values after any Room change.
+The ViewModel remains in Loading until the first observation emission. That
+first emission either loads the capture or produces the stable Capture Not
+Found state when no active capture exists.
 
 ### Note edit and save lifecycle
 
@@ -205,13 +217,21 @@ is unchanged, navigation proceeds without a dialog.
 The detail screen shows status-specific action buttons matching the inbox
 behaviour. All actions use existing `CaptureRepository` methods
 (`markReviewed`, `archive`, `restoreToPending`) and rely on Room observation
-for UI updates.
+for UI updates. The ViewModel validates this transition matrix before calling
+the repository; invalid or no-op actions do not produce success feedback.
+
+| From | Allowed transitions |
+|---|---|
+| Pending | Reviewed, Archived |
+| Reviewed | Pending, Archived |
+| Archived | Pending |
 
 ### Soft deletion
 
 Delete triggers a confirmation dialog. On confirmation, `repository.softDelete`
-is called. After success, the ViewModel signals navigation back to the inbox.
-The deleted item no longer appears under any inbox filter.
+is called. After success, the ViewModel emits one consumed back-navigation
+request and the typed Capture Removed message. The deleted item no longer
+appears under any inbox filter or `observeById` result.
 
 ### Typed messages
 
@@ -221,9 +241,17 @@ No Android resource IDs exist in the ViewModel.
 
 ### Missing/deleted capture handling
 
-If the observed `CaptureItem` is null (invalid ID or soft-deleted while
-viewing), the screen shows a stable `Capture not found` state with a message
-that the capture may have been removed. The user can navigate back to the inbox.
+An invalid ID or a first `null` observation shows the stable `Capture not
+found` state, and Back remains available. If an already loaded capture later
+emits `null` (for example, an external soft-delete), the ViewModel preserves
+the visible capture and unsaved note draft long enough to emit the typed
+Capture Removed message and one back-navigation request. It does not replace
+that state with a generic Missing screen before navigation.
+
+## Repository hygiene
+
+Kotlin compiler diagnostics are local generated output. `.kotlin/` is excluded
+from version control along with Gradle and Android Studio local build files.
 
 ## Key design decisions
 

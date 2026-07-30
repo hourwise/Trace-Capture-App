@@ -4,8 +4,11 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -77,26 +80,36 @@ class CaptureDetailViewModelTest {
         assertFalse(state.isLoading)
         assertFalse(state.isMissing)
         assertEquals(sampleCapture, state.capture)
+        verify(exactly = 1) { repository.observeById("detail-test-id") }
         job.cancel()
     }
 
     @Test
     fun `missing ID sets missing state`() = runTest {
-        captureFlow.value = null
-        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
-            viewModel = CaptureDetailViewModel(
-                savedStateHandle = createHandle("nonexistent"),
-                repository = repository
-            )
-            viewModel.uiState.collect()
-        }
-        advanceUntilIdle()
+        viewModel = CaptureDetailViewModel(
+            savedStateHandle = createHandle(null),
+            repository = repository
+        )
 
         val state = viewModel.uiState.value
         assertFalse(state.isLoading)
         assertTrue(state.isMissing)
         assertNull(state.capture)
-        job.cancel()
+        verify(exactly = 0) { repository.observeById(any()) }
+    }
+
+    @Test
+    fun `blank ID sets missing state without observing repository`() = runTest {
+        viewModel = CaptureDetailViewModel(
+            savedStateHandle = createHandle("   "),
+            repository = repository
+        )
+
+        val state = viewModel.uiState.value
+        assertFalse(state.isLoading)
+        assertTrue(state.isMissing)
+        assertNull(state.capture)
+        verify(exactly = 0) { repository.observeById(any()) }
     }
 
     @Test
@@ -771,6 +784,210 @@ class CaptureDetailViewModelTest {
         job.cancel()
     }
 
-    private fun createHandle(captureId: String) =
-        androidx.lifecycle.SavedStateHandle(mapOf("captureId" to captureId))
+    @Test
+    fun `state remains loading before the first repository emission`() = runTest {
+        val delayedFlow = MutableSharedFlow<CaptureItem?>()
+        every { repository.observeById("delayed-id") } returns delayedFlow
+
+        viewModel = CaptureDetailViewModel(
+            savedStateHandle = createHandle("delayed-id"),
+            repository = repository
+        )
+        runCurrent()
+
+        assertTrue(viewModel.uiState.value.isLoading)
+        assertFalse(viewModel.uiState.value.isMissing)
+    }
+
+    @Test
+    fun `first null emission shows stable missing state`() = runTest {
+        val delayedFlow = MutableSharedFlow<CaptureItem?>()
+        every { repository.observeById("delayed-id") } returns delayedFlow
+
+        viewModel = CaptureDetailViewModel(
+            savedStateHandle = createHandle("delayed-id"),
+            repository = repository
+        )
+        runCurrent()
+        delayedFlow.emit(null)
+        runCurrent()
+
+        val state = viewModel.uiState.value
+        assertFalse(state.isLoading)
+        assertTrue(state.isMissing)
+        assertNull(state.capture)
+        assertNull(state.message)
+        assertFalse(state.pendingNavigation)
+    }
+
+    @Test
+    fun `external deletion preserves the loaded draft and navigates once`() = runTest {
+        val observedCaptures = MutableSharedFlow<CaptureItem?>()
+        every { repository.observeById("detail-test-id") } returns observedCaptures
+        val navigationRequests = mutableListOf<Unit>()
+
+        viewModel = CaptureDetailViewModel(
+            savedStateHandle = createHandle("detail-test-id"),
+            repository = repository
+        )
+        runCurrent()
+        val stateJob = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect { state ->
+                if (state.pendingNavigation) navigationRequests += Unit
+            }
+        }
+        observedCaptures.emit(sampleCapture)
+        runCurrent()
+        viewModel.onNoteChanged("Unsaved draft")
+
+        observedCaptures.emit(null)
+        runCurrent()
+
+        val removedState = viewModel.uiState.value
+        assertEquals(CaptureDetailMessage.CaptureRemoved, removedState.message)
+        assertTrue(removedState.pendingNavigation)
+        assertFalse(removedState.isMissing)
+        assertEquals(sampleCapture, removedState.capture)
+        assertEquals("Unsaved draft", removedState.noteDraft)
+
+        observedCaptures.emit(null)
+        runCurrent()
+        assertEquals(1, navigationRequests.size)
+
+        viewModel.onNavigated()
+        assertFalse(viewModel.uiState.value.pendingNavigation)
+        stateJob.cancel()
+    }
+
+    @Test
+    fun `save snapshots the note and ignores a repeated tap`() = runTest {
+        val saveStarted = CompletableDeferred<Unit>()
+        val finishSave = CompletableDeferred<Unit>()
+        captureFlow.value = sampleCapture
+        coEvery { repository.updateNote(any(), any()) } coAnswers {
+            saveStarted.complete(Unit)
+            finishSave.await()
+        }
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel = CaptureDetailViewModel(
+                savedStateHandle = createHandle("detail-test-id"),
+                repository = repository
+            )
+            viewModel.uiState.collect()
+        }
+        advanceUntilIdle()
+
+        viewModel.onNoteChanged("Note at save time")
+        viewModel.onSaveNote()
+        viewModel.onSaveNote()
+        runCurrent()
+        saveStarted.await()
+
+        viewModel.onNoteChanged("Later edit")
+        captureFlow.value = sampleCapture.copy(note = "Room update")
+        runCurrent()
+        finishSave.complete(Unit)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            repository.updateNote("detail-test-id", "Note at save time")
+        }
+        assertEquals("Later edit", viewModel.uiState.value.noteDraft)
+        job.cancel()
+    }
+
+    @Test
+    fun `archive works from reviewed`() = runTest {
+        captureFlow.value = sampleCapture.copy(status = CaptureStatus.REVIEWED)
+        coEvery { repository.archive(any()) } returns Unit
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel = CaptureDetailViewModel(createHandle("detail-test-id"), repository)
+            viewModel.uiState.collect()
+        }
+        advanceUntilIdle()
+
+        viewModel.onArchive()
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { repository.archive("detail-test-id") }
+        assertEquals(CaptureDetailMessage.Archived, viewModel.uiState.value.message)
+        job.cancel()
+    }
+
+    @Test
+    fun `restore works from reviewed`() = runTest {
+        captureFlow.value = sampleCapture.copy(status = CaptureStatus.REVIEWED)
+        coEvery { repository.restoreToPending(any()) } returns Unit
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel = CaptureDetailViewModel(createHandle("detail-test-id"), repository)
+            viewModel.uiState.collect()
+        }
+        advanceUntilIdle()
+
+        viewModel.onRestoreToPending()
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { repository.restoreToPending("detail-test-id") }
+        assertEquals(CaptureDetailMessage.Restored, viewModel.uiState.value.message)
+        job.cancel()
+    }
+
+    @Test
+    fun `invalid status transitions do not access the repository or report success`() = runTest {
+        captureFlow.value = sampleCapture.copy(status = CaptureStatus.ARCHIVED)
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel = CaptureDetailViewModel(createHandle("detail-test-id"), repository)
+            viewModel.uiState.collect()
+        }
+        advanceUntilIdle()
+
+        viewModel.onMarkReviewed()
+        viewModel.onArchive()
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { repository.markReviewed(any()) }
+        coVerify(exactly = 0) { repository.archive(any()) }
+        assertNull(viewModel.uiState.value.message)
+
+        captureFlow.value = sampleCapture.copy(status = CaptureStatus.PENDING)
+        advanceUntilIdle()
+        viewModel.onRestoreToPending()
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { repository.restoreToPending(any()) }
+        assertNull(viewModel.uiState.value.message)
+        job.cancel()
+    }
+
+    @Test
+    fun `deletion navigation is consumed and is not requested again by the observation`() = runTest {
+        captureFlow.value = sampleCapture
+        coEvery { repository.softDelete(any()) } returns Unit
+        val navigationRequests = mutableListOf<Unit>()
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel = CaptureDetailViewModel(createHandle("detail-test-id"), repository)
+            viewModel.uiState.collect { state ->
+                if (state.pendingNavigation) navigationRequests += Unit
+            }
+        }
+        advanceUntilIdle()
+
+        viewModel.onDeleteRequested()
+        viewModel.onDeleteConfirmed()
+        advanceUntilIdle()
+        captureFlow.value = null
+        advanceUntilIdle()
+
+        assertEquals(1, navigationRequests.size)
+        assertTrue(viewModel.uiState.value.pendingNavigation)
+        viewModel.onNavigated()
+        assertFalse(viewModel.uiState.value.pendingNavigation)
+        assertEquals(1, navigationRequests.size)
+        job.cancel()
+    }
+
+    private fun createHandle(captureId: String?) =
+        androidx.lifecycle.SavedStateHandle(
+            captureId?.let { mapOf<String, Any?>("captureId" to it) } ?: emptyMap()
+        )
 }
