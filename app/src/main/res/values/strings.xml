@@ -85,4 +85,29 @@
         <item quantity="one">1 detected URL</item>
         <item quantity="other">%1$d detected URLs</item>
     </plurals>
+
+    <string name="export_capture">Export capture</string>
+    <string name="export_format_json">JSON</string>
+    <string name="export_format_plain_text">Plain text</string>
+    <string name="export_format_json_description">JSON — lossless machine-readable format</string>
+    <string name="export_format_plain_text_description">Plain text — human-readable format</string>
+    <string name="export_save_or_share_title">Export options</string>
+    <string name="export_save_file">Save file</string>
+    <string name="export_share">Share</string>
+    <string name="export_preparing">Preparing export</string>
+    <string name="export_progress">Preparing export…</string>
+    <string name="export_saved">Export saved</string>
+    <string name="export_shared">Export shared</string>
+    <string name="export_failed">Export failed</string>
+    <string name="export_write_failed">File write failed</string>
+    <string name="export_no_sharing_app">No compatible sharing app</string>
+    <string name="export_save_note_first">Save your note changes before exporting.</string>
+    <string name="export_empty">There are no captures to export</string>
+    <string name="export_too_large">The export is too large</string>
+    <string name="share_export">Share export</string>
+    <string name="share_subject">TRACE Capture export</string>
+    <plurals name="exporting_count">
+        <item quantity="one">Exporting %1$d capture</item>
+        <item quantity="other">Exporting %1$d captures</item>
+    </plurals>
 </resources>

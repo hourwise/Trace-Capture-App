@@ -1,11 +1,16 @@
 package uk.co.pcgsoft.tracecapture.detail
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -30,6 +35,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import uk.co.pcgsoft.tracecapture.R
 import uk.co.pcgsoft.tracecapture.domain.CaptureItem
 import uk.co.pcgsoft.tracecapture.domain.CaptureStatus
+import uk.co.pcgsoft.tracecapture.export.ExportFormat
+import uk.co.pcgsoft.tracecapture.export.ExportMessage
 import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -40,9 +47,11 @@ import java.util.Locale
 fun CaptureDetailScreen(
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier,
-    viewModel: CaptureDetailViewModel = hiltViewModel()
+    viewModel: CaptureDetailViewModel = hiltViewModel(),
+    exportViewModel: CaptureExportViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val exportState by exportViewModel.exportState.collectAsStateWithLifecycle()
 
     LaunchedEffect(uiState.pendingNavigation) {
         if (uiState.pendingNavigation) {
@@ -82,6 +91,64 @@ fun CaptureDetailScreen(
         }
     }
 
+    LaunchedEffect(exportState.message) {
+        exportState.message?.let { message ->
+            val resId = when (message) {
+                ExportMessage.ExportSaved -> R.string.export_saved
+                ExportMessage.ExportShared -> R.string.export_shared
+                ExportMessage.ExportFailed -> R.string.export_failed
+                ExportMessage.FileWriteFailed -> R.string.export_write_failed
+                ExportMessage.NoSharingApp -> R.string.export_no_sharing_app
+                ExportMessage.SaveNoteFirst -> R.string.export_save_note_first
+                ExportMessage.EmptyExport -> R.string.export_empty
+                ExportMessage.ExportTooLarge -> R.string.export_too_large
+            }
+            snackbarHostState.showSnackbar(context.getString(resId))
+            exportViewModel.onExportMessageShown()
+        }
+    }
+
+    val createDocumentLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            exportViewModel.onDocumentUriReceived(result.data?.data)
+        } else {
+            exportViewModel.onDocumentUriReceived(null)
+        }
+    }
+
+    LaunchedEffect(exportState.pendingDocument) {
+        val request = exportState.pendingDocument ?: return@LaunchedEffect
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = request.mimeType
+            putExtra(Intent.EXTRA_TITLE, request.suggestedFileName)
+        }
+        createDocumentLauncher.launch(intent)
+    }
+
+    val shareLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { exportViewModel.onShareLaunched() }
+
+    LaunchedEffect(exportState.pendingShare) {
+        val share = exportState.pendingShare ?: return@LaunchedEffect
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = share.mimeType
+            putExtra(Intent.EXTRA_STREAM, share.contentUri)
+            putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.share_subject))
+            clipData = ClipData.newRawUri(null, share.contentUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        try {
+            val chooser = Intent.createChooser(sendIntent, context.getString(R.string.share_export))
+            shareLauncher.launch(chooser)
+        } catch (_: ActivityNotFoundException) {
+            exportViewModel.onShareFailedNoApp()
+        }
+    }
+
     if (uiState.showUnsavedChangesDialog) {
         UnsavedChangesDialog(
             onKeepEditing = viewModel::onKeepEditing,
@@ -94,6 +161,25 @@ fun CaptureDetailScreen(
             capture = uiState.capture!!,
             onConfirm = viewModel::onDeleteConfirmed,
             onDismiss = viewModel::onDeleteCancelled
+        )
+    }
+
+    if (exportState.showFormatChooser) {
+        ExportFormatDialog(
+            onFormatSelected = exportViewModel::onExportFormatSelected,
+            onDismiss = exportViewModel::onExportDialogCancelled
+        )
+    }
+
+    if (exportState.showSaveOrShareChooser &&
+        exportState.selectedFormat != null &&
+        uiState.capture != null
+    ) {
+        ExportSaveOrShareDialog(
+            format = exportState.selectedFormat!!,
+            onSave = { exportViewModel.onSaveFileRequested(uiState.capture!!) },
+            onShare = { exportViewModel.onShareRequested(uiState.capture!!) },
+            onDismiss = exportViewModel::onExportDialogCancelled
         )
     }
 
@@ -136,6 +222,14 @@ fun CaptureDetailScreen(
             onArchive = viewModel::onArchive,
             onRestore = viewModel::onRestoreToPending,
             onDelete = viewModel::onDeleteRequested,
+            onExport = {
+                if (uiState.noteChanged) {
+                    exportViewModel.onExportBlocked()
+                } else {
+                    exportViewModel.onExportRequested()
+                }
+            },
+            isPreparingExport = exportState.isPreparing,
             modifier = Modifier.padding(innerPadding)
         )
     }
@@ -153,35 +247,55 @@ fun CaptureDetailContent(
     onArchive: () -> Unit,
     onRestore: () -> Unit,
     onDelete: () -> Unit,
+    onExport: () -> Unit,
+    isPreparingExport: Boolean,
     modifier: Modifier = Modifier
 ) {
-    when {
-        uiState.isLoading -> {
-            Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+    Box(modifier = modifier) {
+        when {
+            uiState.isLoading -> {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+            uiState.isMissing || uiState.capture == null -> {
+                MissingState(modifier = Modifier)
+            }
+            else -> {
+                CaptureDetailLoaded(
+                    capture = uiState.capture!!,
+                    noteDraft = uiState.noteDraft,
+                    noteChanged = uiState.noteChanged,
+                    isSavingNote = uiState.isSavingNote,
+                    actionInProgress = uiState.actionInProgress,
+                    onNoteChanged = onNoteChanged,
+                    onSaveNote = onSaveNote,
+                    onOpenUrl = onOpenUrl,
+                    onCopyUrl = onCopyUrl,
+                    onCopyContent = onCopyContent,
+                    onMarkReviewed = onMarkReviewed,
+                    onArchive = onArchive,
+                    onRestore = onRestore,
+                    onDelete = onDelete,
+                    onExport = onExport,
+                    modifier = Modifier
+                )
             }
         }
-        uiState.isMissing || uiState.capture == null -> {
-            MissingState(modifier = modifier)
-        }
-        else -> {
-            CaptureDetailLoaded(
-                capture = uiState.capture!!,
-                noteDraft = uiState.noteDraft,
-                noteChanged = uiState.noteChanged,
-                isSavingNote = uiState.isSavingNote,
-                actionInProgress = uiState.actionInProgress,
-                onNoteChanged = onNoteChanged,
-                onSaveNote = onSaveNote,
-                onOpenUrl = onOpenUrl,
-                onCopyUrl = onCopyUrl,
-                onCopyContent = onCopyContent,
-                onMarkReviewed = onMarkReviewed,
-                onArchive = onArchive,
-                onRestore = onRestore,
-                onDelete = onDelete,
-                modifier = modifier
-            )
+
+        if (isPreparingExport) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.4f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(stringResource(R.string.export_progress))
+                }
+            }
         }
     }
 }
@@ -222,6 +336,7 @@ private fun CaptureDetailLoaded(
     onArchive: () -> Unit,
     onRestore: () -> Unit,
     onDelete: () -> Unit,
+    onExport: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -266,7 +381,8 @@ private fun CaptureDetailLoaded(
             onMarkReviewed = onMarkReviewed,
             onArchive = onArchive,
             onRestore = onRestore,
-            onDelete = onDelete
+            onDelete = onDelete,
+            onExport = onExport
         )
 
         Spacer(modifier = Modifier.height(32.dp))
@@ -499,7 +615,8 @@ private fun ActionSection(
     onMarkReviewed: () -> Unit,
     onArchive: () -> Unit,
     onRestore: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onExport: () -> Unit
 ) {
     Text(
         text = stringResource(R.string.actions),
@@ -557,6 +674,16 @@ private fun ActionSection(
     Spacer(modifier = Modifier.height(16.dp))
 
     OutlinedButton(
+        onClick = onExport,
+        enabled = actionInProgress == null,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(stringResource(R.string.export_capture))
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    OutlinedButton(
         onClick = onDelete,
         enabled = actionInProgress == null,
         colors = ButtonDefaults.outlinedButtonColors(
@@ -607,6 +734,91 @@ private fun DeleteConfirmDialog(
         confirmButton = {
             TextButton(onClick = onConfirm) {
                 Text(stringResource(R.string.delete))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.cancel_button))
+            }
+        }
+    )
+}
+
+@Composable
+private fun ExportFormatDialog(
+    onFormatSelected: (ExportFormat) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.export_capture)) },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                FilledTonalButton(
+                    onClick = { onFormatSelected(ExportFormat.JSON) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.export_format_json))
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.export_format_json_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                FilledTonalButton(
+                    onClick = { onFormatSelected(ExportFormat.PLAIN_TEXT) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(R.string.export_format_plain_text))
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.export_format_plain_text_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.cancel_button))
+            }
+        }
+    )
+}
+
+@Composable
+private fun ExportSaveOrShareDialog(
+    format: ExportFormat,
+    onSave: () -> Unit,
+    onShare: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val description = if (format == ExportFormat.JSON) {
+        stringResource(R.string.export_format_json_description)
+    } else {
+        stringResource(R.string.export_format_plain_text_description)
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.export_save_or_share_title)) },
+        text = {
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onShare) {
+                    Text(stringResource(R.string.export_share))
+                }
+                Button(onClick = onSave) {
+                    Text(stringResource(R.string.export_save_file))
+                }
             }
         },
         dismissButton = {
