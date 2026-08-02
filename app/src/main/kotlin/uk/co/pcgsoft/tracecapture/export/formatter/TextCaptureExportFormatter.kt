@@ -72,6 +72,6 @@ class TextCaptureExportFormatter @Inject constructor(
     }
 
     private companion object {
-        const val SEPARATOR = "=".repeat(60)
+        const val SEPARATOR = "============================================================"
     }
 }
