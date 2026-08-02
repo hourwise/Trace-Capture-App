@@ -233,6 +233,28 @@ is called. After success, the ViewModel emits one consumed back-navigation
 request and the typed Capture Removed message. The deleted item no longer
 appears under any inbox filter or `observeById` result.
 
+### Export lifecycle
+
+The detail screen includes an Export button that becomes available when the
+capture's note is in a valid state (no unsaved changes required). Export
+follows a two-step flow:
+
+1. **Format selection**: User chooses JSON or Plain Text format via dialog.
+2. **Save/Share choice**: User chooses to save to a document or share directly.
+
+On Save, a document picker (`CreateDocument` contract) opens and
+`pendingDocument` is held until the picker callback receives a URI. If the URI
+is valid, the export content is written to it via `FileProvider`.
+
+On Share, the export content is written to a cache file, wrapped with
+`FileProvider.getUriForFile()`, and `pendingShare` is held until the Activity
+result shows the share succeeded or failed.
+
+Both `pendingDocument` and `pendingShare` are one-time consumables: they are
+cleared after the picker/activity result, preventing stale re-exports if the
+detail screen is restored or rotated. Only one pending operation is active at
+a time.
+
 ### Typed messages
 
 `CaptureDetailMessage` is a sealed interface with typed success and failure
@@ -247,6 +269,73 @@ emits `null` (for example, an external soft-delete), the ViewModel preserves
 the visible capture and unsaved note draft long enough to emit the typed
 Capture Removed message and one back-navigation request. It does not replace
 that state with a generic Missing screen before navigation.
+
+
+## Export design (Phase 6)
+
+Export allows users to download a capture in JSON or plain-text format, via
+save-to-file or share-to-app.
+
+### Export pipeline
+
+The export flow is coordinated by `CaptureExportViewModel` and consists of:
+
+1. **`DefaultExportCoordinator.prepareExport()`**: Takes a list of captures,
+   validates size limits, formats the output, and returns either `Success` or
+   `Failure` with details.
+
+2. **Formatters**: Both `JsonCaptureExportFormatter` and
+   `TextCaptureExportFormatter` implement `CaptureExportFormatter` and delegate
+   to `CaptureExportMapper` to build consistent document objects.
+
+3. **File writing**: `AndroidExportFileWriter` writes prepared content to a
+   user-selected URI via `ContentResolver.openOutputStream()`, running on
+   `Dispatchers.IO`.
+
+4. **Share file management**: `AndroidExportShareFileManager` writes to app
+   cache, generates a `FileProvider` URI, and manages cache cleanup via
+   `ExportCacheCleaner`.
+
+### Validation and error handling
+
+- **Empty captures**: `ExportFailure.EmptySelection`
+- **Too many captures**: `ExportFailure.TooManyCaptures` (default: 10,000)
+- **Output size**: `ExportFailure.OutputTooLarge` (default: 50 MB)
+- **Formatting error**: `ExportFailure.FormattingFailed()`
+- **File write error**: `FileWriteResult.Failure()`
+
+### Export state management
+
+`DetailExportState` holds:
+
+- `pendingDocument`: One-time `CreateExportDocumentRequest` consumed by
+  document picker callback.
+- `pendingShare`: One-time `PreparedShareExport` consumed by share
+  activity result.
+- `isPreparing`: Flag showing that export formatting or writing is in
+  progress.
+
+Both `pending*` fields are cleared after their respective callback/result,
+ensuring no stale re-exports on screen rotation or restoration.
+
+### Document picker and share intents
+
+- **Save to file**: `CreateDocument` activity contract receives a URI. If
+  non-null and valid, `AndroidExportFileWriter.write()` is called. Result
+  triggers success or failure message.
+- **Share**: `prepareShareExport()` creates a cache file with a `FileProvider`
+  URI, holds `pendingShare`, and awaits share activity result to confirm share
+  was launched or failed.
+
+### Limits and safety
+
+Default limits are conservative:
+
+- 10,000 captures per export (cumulative size varies)
+- 50 MB max output bytes
+- UTF-8 encoding for all text formats
+- Cache-based sharing with automatic cleanup (`ExportCacheCleaner`)
+- No server-side export; all work is local and ephemeral
 
 ## Repository hygiene
 

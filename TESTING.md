@@ -17,6 +17,15 @@ src/test/                    # Unit tests (JVM, no Android dependency)
     InboxViewModelTest       # ViewModel: filtering, search, status actions, soft delete
   uk.co.pcgsoft.tracecapture.detail
     CaptureDetailViewModelTest # ViewModel: route validation, loading lifecycle, notes, status actions, delete, unsaved changes
+  uk.co.pcgsoft.tracecapture.export
+    ExportFormatTest         # ExportFormat enum properties (mimeType, extension)
+    UtcTimestampFormatterTest # UTC epoch formatting, edge cases
+    ReadableUtcDateFormatterTest # Readable UTC date formatting, consistency
+    ExportLimitsTest         # Default and custom limits validation
+    CaptureExportMapperTest  # CaptureItem → CaptureExportItem mapping, labels, sources
+    JsonCaptureExportFormatterTest # JSON formatting, pretty-printing, completeness
+    TextCaptureExportFormatterTest # Text formatting, sections, separators, multi-capture handling
+    DefaultExportCoordinatorTest # Validation, formatting, output size limits, failure modes
 
 src/androidTest/             # Instrumented tests (Android device/emulator)
   uk.co.pcgsoft.tracecapture.data.local
@@ -61,6 +70,14 @@ src/androidTest/             # Instrumented tests (Android device/emulator)
 | `ShareCaptureViewModelTest` | Intent processing, note editing (2000-char enforcement), save workflow, duplicate detection (newest selected, text-only skips), repeated-save guard, failure/retry, domain properties of saved item |
 | `InboxViewModelTest` | Default filter, filter changes, search functionality, status mutations (mark reviewed, archive, restore), soft delete confirmation, action progress guard, error handling, live Room updates |
 | `CaptureDetailViewModelTest` | Invalid route rejection without repository access, Loading-before-first-emission, missing versus externally removed captures, note-save snapshots, status-transition validation, and one-time navigation consumption |
+| `ExportFormatTest` | JSON and PLAIN_TEXT format properties (mimeType and extension) |
+| `UtcTimestampFormatterTest` | UTC timestamp formatting from epoch millis, edge cases (0, max, recent times) |
+| `ReadableUtcDateFormatterTest` | Readable UTC date formatting, format consistency, handling of various timestamps |
+| `ExportLimitsTest` | Default limits (10,000 captures, 50 MB output), custom limit creation |
+| `CaptureExportMapperTest` | CaptureItem to CaptureExportItem mapping, status/type/syncStatus labels, source label resolution, document generation |
+| `JsonCaptureExportFormatterTest` | JSON format compliance, pretty-printing, required fields presence, empty list handling, UTF-8 encoding |
+| `TextCaptureExportFormatterTest` | Text format sections, SEPARATOR constant (60 =), header with schema version, multi-capture details, URL and note rendering |
+| `DefaultExportCoordinatorTest` | EmptySelection, TooManyCaptures, OutputTooLarge failures, Success scenarios, FormattingFailed exception, correct formatter selection |
 
 ## Database tests
 
@@ -110,8 +127,14 @@ tracked.
 
 ## What is not yet tested
 
-- Export (Phase 6)
+- Export Android integration tests (FileProvider, share intents, document picker)
+- Export ViewModel lifecycle (`pendingDocument` and `pendingShare` consumption)
 - Settings (Phase 7)
+
+Phase 6A provides comprehensive unit test coverage for export formatting, validation,
+and coordination. Android integration tests for export file operations and share
+handling will be added as part of Phase 6B (if device testing is required) or
+in a later phase.
 
 These will be added in their respective phases.
 
@@ -242,7 +265,31 @@ Do not add platform-specific scraping to fix unusual share text from any source.
 19. Test large font scaling.
 20. Test TalkBack navigation.
 
+## Phase 6A Manual Verification Checklist (Export)
+
+1. **Export button availability**: Verify Export button appears on detail screen.
+2. **Export format selection**: Tap Export and confirm JSON/Plain Text dialog appears.
+3. **JSON export**: Select JSON format, tap Save, and verify:
+   - Document picker opens
+   - File is saved with `.json` extension
+   - File contains valid JSON structure with schema version and captures
+4. **Plain Text export**: Select Plain Text format, tap Save, and verify:
+   - Document picker opens
+   - File is saved with `.txt` extension
+   - File contains formatted capture details with separators and headers
+5. **Export via Share**: Select format, tap Share, and verify:
+   - Share chooser opens
+   - Share is successful with a messaging or email app
+   - File is readable by the recipient
+6. **Empty capture export**: Create and attempt to export an empty list (sanity check).
+7. **Large capture handling**: Export a capture with large original content and multiple URLs.
+8. **File permissions**: Verify app can write to user's selected Documents or Downloads directory.
+9. **Message feedback**: Verify export success/failure messages appear after picker or share.
+10. **State after export**: Verify detail screen remains stable and can export again immediately.
+11. **Rotate during export**: Trigger export preparation and rotate device; verify state is preserved.
+
 ## Test guidelines
+
 
 1. Tests must not depend on the order of other tests
 2. Each test should verify one behaviour

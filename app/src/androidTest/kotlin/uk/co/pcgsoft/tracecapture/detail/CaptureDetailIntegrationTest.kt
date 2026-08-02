@@ -70,7 +70,9 @@ class CaptureDetailIntegrationTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -108,7 +110,9 @@ class CaptureDetailIntegrationTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -145,7 +149,9 @@ class CaptureDetailIntegrationTest {
                     },
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -180,7 +186,9 @@ class CaptureDetailIntegrationTest {
                         item = item.copy(status = CaptureStatus.ARCHIVED)
                     },
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -216,7 +224,9 @@ class CaptureDetailIntegrationTest {
                         onRestore = {},
                         onDelete = {
                             showDetail = false
-                        }
+                        },
+                        onExport = {},
+                        isPreparingExport = false
                     )
                 }
             }
@@ -245,7 +255,9 @@ class CaptureDetailIntegrationTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -273,7 +285,9 @@ class CaptureDetailIntegrationTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -305,7 +319,9 @@ class CaptureDetailIntegrationTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
