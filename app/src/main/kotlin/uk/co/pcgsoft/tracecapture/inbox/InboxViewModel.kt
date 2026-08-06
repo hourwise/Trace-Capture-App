@@ -10,16 +10,21 @@ import kotlinx.coroutines.launch
 import uk.co.pcgsoft.tracecapture.data.repository.CaptureRepository
 import uk.co.pcgsoft.tracecapture.domain.CaptureItem
 import uk.co.pcgsoft.tracecapture.domain.CaptureStatus
+import uk.co.pcgsoft.tracecapture.settings.DefaultSettingsRepository
+import uk.co.pcgsoft.tracecapture.settings.SettingsRepository
+import uk.co.pcgsoft.tracecapture.settings.toInboxFilter
 import javax.inject.Inject
 
 @OptIn(FlowPreview::class)
 @HiltViewModel
 class InboxViewModel @Inject constructor(
     private val repository: CaptureRepository,
-    private val savedStateHandle: SavedStateHandle = SavedStateHandle()
+    private val savedStateHandle: SavedStateHandle = SavedStateHandle(),
+    private val settingsRepository: SettingsRepository = DefaultSettingsRepository()
 ) : ViewModel() {
 
     private val _filter = MutableStateFlow(InboxFilter.PENDING)
+    private val _userSelectedFilter = MutableStateFlow(false)
     private val _searchQuery = MutableStateFlow("")
     private val _selection = MutableStateFlow(loadSelection())
     private val _pendingDelete = MutableStateFlow<CaptureItem?>(null)
@@ -30,6 +35,20 @@ class InboxViewModel @Inject constructor(
         _selection
             .onEach(::persistSelection)
             .launchIn(viewModelScope)
+        // Apply the stored default filter once for a fresh session. Precedence:
+        // restored/current-session filter > explicit current-session choice >
+        // stored default > Pending. Later DataStore emissions never overwrite the
+        // active session, so there is no preference-to-UI feedback loop.
+        viewModelScope.launch {
+            val default = try {
+                settingsRepository.settings.first().defaultInboxFilter.toInboxFilter()
+            } catch (_: Exception) {
+                InboxFilter.PENDING
+            }
+            if (!_userSelectedFilter.value) {
+                _filter.value = default
+            }
+        }
     }
 
     private val _debouncedSearchQuery = _searchQuery
@@ -130,6 +149,7 @@ class InboxViewModel @Inject constructor(
     )
 
     fun onFilterSelected(filter: InboxFilter) {
+        _userSelectedFilter.value = true
         _filter.value = filter
     }
 

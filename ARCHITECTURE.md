@@ -74,30 +74,33 @@ confirmation. A future settings phase may add configurable quick-save.
 - `InboxViewModel`: Injected into `InboxScreen`. Owns inbox filtering, search, status mutation coordination (mark reviewed, archive, restore, delete), and ID-based selection state.
 - `InboxExportViewModel`: Injected into `InboxScreen`. Owns bulk export workflow state while reusing the Phase 6A export coordinator, file writer, and share-file manager.
 - `CaptureDetailViewModel`: Injected into `CaptureDetailScreen`. Owns capture observation by ID, note editing, status transitions, soft deletion, and unsaved-changes protection.
+- `SettingsViewModel`: Injected into `SettingsScreen`. Owns device-local settings reading/writing, choice dialogs, temporary-file deletion, reset, and typed messages. It has no Android context dependency.
 
 The composable observes `uiState` and renders the appropriate screen. No Room
 access or domain construction happens in the composable layer.
 
 ## Navigation
 
-Navigation Compose provides two routes:
+Navigation Compose provides three routes:
 
 - `inbox` — start destination, renders `InboxScreen`
 - `detail/{captureId}` — renders `CaptureDetailScreen`, receives only the capture ID
+- `settings` — renders `SettingsScreen` (Phase 7), accessed from the inbox top app bar
 
 Only the capture ID is passed as a navigation argument. The detail screen
 observes the capture from Room by ID, keeping Room as the single source of
-truth. Navigation is defined in `AppRoutes` in `MainActivity.kt`.
+truth. Navigation is defined in `AppRoutes` in `MainActivity.kt`; the settings
+destination uses `SettingsRoute.route` from the `settings` package.
 
 `AppRoutes.detail()` URI-encodes IDs before putting them in the route. The
 detail ViewModel accepts only non-blank IDs from `SavedStateHandle`; a missing,
 blank, or otherwise malformed argument does not start repository observation
 and renders the existing Capture Not Found screen with Back still available.
 
-`MainActivity` hosts a `NavHost` with both routes. The `InboxScreen` callback
-`onCaptureSelected` triggers navigation to `detail/{captureId}`, replacing the
-Phase 4 placeholder. Back navigation restores the inbox with its natural
-Navigation Compose state preservation.
+`MainActivity` hosts a `NavHost` with all three routes. The `InboxScreen`
+callbacks trigger navigation to `detail/{captureId}` and to `settings`
+(`launchSingleTop`, so no duplicate Settings destinations). Back navigation
+returns to the inbox with its natural Navigation Compose state preservation.
 
 ## Inbox and Search
 
@@ -418,8 +421,102 @@ Default limits are conservative:
 - 10,000 captures per export (cumulative size varies)
 - 50 MB max output bytes
 - UTF-8 encoding for all text formats
-- Cache-based sharing with automatic cleanup (`ExportCacheCleaner`)
+- Cache-based sharing with automatic cleanup (`ExportCacheCleaner`, retention-driven)
 - No server-side export; all work is local and ephemeral
+
+## Settings (Phase 7)
+
+All settings are local to the device. There are no accounts, login, cloud
+synchronisation, server configuration, API keys, analytics, telemetry, remote
+configuration, automatic publishing/upload, notifications, or background jobs.
+
+### Storage architecture
+
+Settings use AndroidX DataStore Preferences in one named file
+(`trace_capture_settings`). `SettingsModule` provides a single
+application-scoped `DataStore<Preferences>` and binds `SettingsRepository` to
+`DataStoreSettingsRepository`. The repository interface is separated from the
+DataStore implementation, and the ViewModel depends only on the interface —
+application context is injected only into the DataStore boundary. Reads never
+crash collection (failures emit safe defaults); writes return a typed
+`SettingsWriteResult` instead of leaking exceptions. SharedPreferences is not
+used.
+
+### Preference keys, stable values and defaults
+
+| Key | Persisted values | Default |
+|---|---|---|
+| `default_inbox_filter` | `pending`, `reviewed`, `archived`, `all` | `pending` |
+| `preferred_export_format` | `ask_every_time`, `json`, `plain_text` | `ask_every_time` |
+| `exit_selection_after_successful_export` | `true`/`false` | `true` |
+| `temporary_export_retention` | `one_hour`, `twenty_four_hours`, `seven_days` | `twenty_four_hours` |
+| `confirm_before_reset` | `true`/`false` | `true` |
+
+Values are explicit stable strings (never ordinals or enum names). Unknown,
+missing and malformed persisted values fall back safely to their defaults.
+`SettingsDefaults.value` is the single authoritative defaults object.
+
+### Default inbox filter
+
+The stored default applies once when a fresh `InboxViewModel` is created.
+Precedence: restored/current-session filter > explicit current-session choice
+> stored default > Pending fallback. The default is read once (`.first()`), so
+later DataStore emissions never overwrite an active session and there is no
+preference-to-UI feedback loop. A malformed preference falls back to Pending.
+
+### Preferred export format
+
+The `preferred_export_format` preference drives both the detail
+(`CaptureExportViewModel`) and bulk (`InboxExportViewModel`) export flows.
+`ask_every_time` keeps the format chooser; `json` and `plain_text` skip it and
+preselect the format in the Save/Share dialog. No export begins until Save or
+Share is explicitly chosen, cancellation is always possible, and a preference
+read failure falls back to Ask every time. The snapshot is read when the export
+begins, so a mid-export setting change never alters the active operation.
+
+### Exit selection after successful export
+
+Bulk export only. When enabled (default), a successful Save or Share-chooser
+launch exits selection mode. When disabled, selection, IDs, filter and search
+are retained so the same set can be exported again. Failures and cancellation
+always retain selection regardless of the preference. The snapshot is captured
+at operation start. Detail export is unaffected.
+
+### Temporary export retention and deletion
+
+`temporary_export_retention` maps to 1 hour / 24 hours / 7 days and is read by
+`ExportCacheCleaner.cleanupWithCurrentRetention()` before a new shared export
+is created (the only safe lifecycle point — there is no WorkManager or
+scheduled process). Cleanup and explicit deletion consider only files with the
+`trace-capture-` prefix inside the dedicated export cache directory; unrelated
+cache files and user-saved documents are never touched. An invalid preference
+falls back to 24 hours. The Settings screen's "Delete temporary files now"
+confirms first, runs through `ExportShareFileManager.deleteAllTemporaryExports()`
+(no filesystem paths exposed to UI), and reports typed success/failure messages.
+
+### Reset-to-defaults
+
+Reset performs one atomic DataStore `clear()`. It restores all Phase 7
+defaults, never deletes captures, never mutates the database, and never deletes
+temporary files unless separately requested. When `confirm_before_reset` is
+enabled a confirmation dialog explains that captures and exported files are
+unaffected. The UI updates immediately from the DataStore flow.
+
+### Privacy, data and app information
+
+"Privacy and local data" explains (without legal claims): captures are stored
+locally; text/links are received only on explicit share; the app does not
+monitor the clipboard, use an accessibility service, or scrape other apps;
+exports require explicit action; save uses a user-chosen document destination;
+share uses a temporary cache file and the Android Sharesheet; there is no
+automatic upload or server sync; deletion is a soft delete; and temporary files
+are cleaned per the selected retention period. No encryption-at-rest claim is
+made.
+
+App information (name, version, build, package) comes from `BuildConfig` in
+the composable layer — never hardcoded. A simple local licences screen lists
+the framework categories used (AndroidX, Jetpack Compose, Room, Hilt, Kotlin
+coroutines, Kotlin serialization) without fabricating licence text.
 
 ## Repository hygiene
 

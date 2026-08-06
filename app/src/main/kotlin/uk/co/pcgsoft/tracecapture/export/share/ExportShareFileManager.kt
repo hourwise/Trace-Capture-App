@@ -14,4 +14,7 @@ interface ExportShareFileManager {
         mimeType: String,
         fileName: String
     ): PreparedShareExport
+
+    /** Deletes all dedicated temporary shared-export files; returns the count removed. */
+    suspend fun deleteAllTemporaryExports(): Int
 }

@@ -130,4 +130,48 @@
         <item quantity="one">Exporting %1$d capture</item>
         <item quantity="other">Exporting %1$d captures</item>
     </plurals>
+
+    <!-- Phase 7: Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_capture_and_inbox">Capture and inbox</string>
+    <string name="settings_default_inbox_filter">Default inbox filter</string>
+    <string name="settings_export">Export</string>
+    <string name="settings_preferred_export_format">Preferred export format</string>
+    <string name="settings_exit_selection_after_successful_export">Exit selection after successful export</string>
+    <string name="settings_temporary_export_retention">Temporary shared-file retention</string>
+    <string name="settings_data_and_privacy">Data and privacy</string>
+    <string name="settings_local_storage_info">All captures are stored locally on this device.</string>
+    <string name="settings_no_automatic_upload">TRACE Capture does not upload captures automatically.</string>
+    <string name="settings_manage_temporary_export_files">Manage temporary export files</string>
+    <string name="settings_delete_temporary_files_now">Delete temporary files now</string>
+    <string name="settings_app">App</string>
+    <string name="settings_version">Version</string>
+    <string name="settings_version_value">%1$s (%2$d)</string>
+    <string name="settings_build">Build</string>
+    <string name="settings_package">Package</string>
+    <string name="settings_open_source_licences">Open-source licences</string>
+    <string name="settings_privacy_and_data">Privacy and data information</string>
+    <string name="settings_reset">Reset</string>
+    <string name="settings_reset_to_defaults">Reset settings to defaults</string>
+    <string name="settings_confirm_before_reset">Confirm before reset</string>
+    <string name="settings_ask_every_time">Ask every time</string>
+    <string name="settings_retention_one_hour">1 hour</string>
+    <string name="settings_retention_twenty_four_hours">24 hours</string>
+    <string name="settings_retention_seven_days">7 days</string>
+    <string name="settings_delete_temporary_files_title">Delete temporary export files?</string>
+    <string name="settings_delete_temporary_files_body">Only temporary shared export files will be deleted. Your saved documents and captures are not affected.</string>
+    <string name="settings_temporary_files_deleted">Temporary export files deleted</string>
+    <string name="settings_no_temporary_files">No temporary export files found</string>
+    <string name="settings_temporary_file_deletion_failed">Could not delete temporary export files</string>
+    <string name="settings_reset_title">Reset settings?</string>
+    <string name="settings_reset_body">This restores TRACE Capture preferences to their defaults.\n\nYour captures and exported files will not be deleted.</string>
+    <string name="settings_reset_complete">Settings reset to defaults</string>
+    <string name="settings_reset_failed">Could not reset settings</string>
+    <string name="settings_saved">Setting saved</string>
+    <string name="settings_save_failed">Could not save the setting</string>
+    <string name="settings_ok">OK</string>
+    <string name="settings_privacy_title">Privacy and local data</string>
+    <string name="settings_privacy_body">Captures are stored locally in the app database.\n\nTRACE Capture receives text and links only when you explicitly share them. It does not monitor the clipboard, use an accessibility service, or scrape other applications.\n\nExports are created only after explicit user action. Saving uses a document destination you choose. Sharing uses a temporary cache file and the Android Sharesheet.\n\nThere is currently no automatic upload or server synchronisation. Deleting a capture is a soft delete. Temporary shared files are cleaned according to the selected retention period.</string>
+    <string name="settings_licences_title">Open-source licences</string>
+    <string name="settings_licences_body">TRACE Capture is built with open-source libraries including AndroidX, Jetpack Compose, Room, Hilt, Kotlin coroutines, and Kotlin serialization. Licence texts are available through the respective projects.</string>
 </resources>

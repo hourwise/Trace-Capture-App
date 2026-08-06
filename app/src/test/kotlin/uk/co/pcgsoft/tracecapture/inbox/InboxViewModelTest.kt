@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.*
 import org.junit.After
@@ -18,6 +19,11 @@ import org.junit.Test
 import uk.co.pcgsoft.tracecapture.data.repository.CaptureRepository
 import uk.co.pcgsoft.tracecapture.domain.CaptureItem
 import uk.co.pcgsoft.tracecapture.domain.CaptureStatus
+import uk.co.pcgsoft.tracecapture.settings.DefaultInboxFilter
+import uk.co.pcgsoft.tracecapture.settings.FakeSettingsRepository
+import uk.co.pcgsoft.tracecapture.settings.SettingsDefaults
+import uk.co.pcgsoft.tracecapture.settings.SettingsRepository
+import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class InboxViewModelTest {
@@ -344,6 +350,91 @@ class InboxViewModelTest {
         advanceUntilIdle()
         coVerify(exactly = 0) { repository.softDelete(any()) }
         assertEquals(null, viewModel.uiState.value.pendingDelete)
+        job.cancel()
+    }
+
+    // ---- Phase 7: default inbox filter ----------------
+
+    @Test
+    fun `pending fallback when no preference exists`() = runTest {
+        val vm = InboxViewModel(repository, settingsRepository = FakeSettingsRepository())
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect() }
+        advanceUntilIdle()
+        assertEquals(InboxFilter.PENDING, vm.uiState.value.filter)
+        job.cancel()
+    }
+
+    @Test
+    fun `stored reviewed default applies on fresh session`() = runTest {
+        val fake = FakeSettingsRepository(
+            SettingsDefaults.value.copy(defaultInboxFilter = DefaultInboxFilter.REVIEWED)
+        )
+        val vm = InboxViewModel(repository, settingsRepository = fake)
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect() }
+        advanceUntilIdle()
+        assertEquals(InboxFilter.REVIEWED, vm.uiState.value.filter)
+        job.cancel()
+    }
+
+    @Test
+    fun `stored archived default applies on fresh session`() = runTest {
+        val fake = FakeSettingsRepository(
+            SettingsDefaults.value.copy(defaultInboxFilter = DefaultInboxFilter.ARCHIVED)
+        )
+        val vm = InboxViewModel(repository, settingsRepository = fake)
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect() }
+        advanceUntilIdle()
+        assertEquals(InboxFilter.ARCHIVED, vm.uiState.value.filter)
+        job.cancel()
+    }
+
+    @Test
+    fun `stored all default applies on fresh session`() = runTest {
+        val fake = FakeSettingsRepository(
+            SettingsDefaults.value.copy(defaultInboxFilter = DefaultInboxFilter.ALL)
+        )
+        val vm = InboxViewModel(repository, settingsRepository = fake)
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect() }
+        advanceUntilIdle()
+        assertEquals(InboxFilter.ALL, vm.uiState.value.filter)
+        job.cancel()
+    }
+
+    @Test
+    fun `explicit current session choice is not overwritten by later emission`() = runTest {
+        val fake = FakeSettingsRepository()
+        val vm = InboxViewModel(repository, settingsRepository = fake)
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect() }
+        // User chooses before the async default read lands; a later DataStore
+        // emission must not overwrite the explicit choice.
+        vm.onFilterSelected(InboxFilter.ALL)
+        fake.emit(SettingsDefaults.value.copy(defaultInboxFilter = DefaultInboxFilter.REVIEWED))
+        advanceUntilIdle()
+        assertEquals(InboxFilter.ALL, vm.uiState.value.filter)
+        job.cancel()
+    }
+
+    @Test
+    fun `malformed preference read falls back to pending`() = runTest {
+        val failingRepo = mockk<SettingsRepository>()
+        coEvery { failingRepo.settings } returns flow { throw IOException("boom") }
+        val vm = InboxViewModel(repository, settingsRepository = failingRepo)
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect() }
+        advanceUntilIdle()
+        assertEquals(InboxFilter.PENDING, vm.uiState.value.filter)
+        job.cancel()
+    }
+
+    @Test
+    fun `changing setting does not disrupt an active inbox session`() = runTest {
+        val fake = FakeSettingsRepository()
+        val vm = InboxViewModel(repository, settingsRepository = fake)
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect() }
+        advanceUntilIdle()
+        vm.onFilterSelected(InboxFilter.REVIEWED)
+        fake.emit(SettingsDefaults.value.copy(defaultInboxFilter = DefaultInboxFilter.ALL))
+        advanceUntilIdle()
+        assertEquals(InboxFilter.REVIEWED, vm.uiState.value.filter)
         job.cancel()
     }
 }

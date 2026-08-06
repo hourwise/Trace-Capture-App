@@ -22,7 +22,7 @@ class AndroidExportShareFileManager @Inject constructor(
     ): PreparedShareExport = withContext(Dispatchers.IO) {
         val directory = File(context.cacheDir, EXPORT_CACHE_DIRECTORY)
         directory.mkdirs()
-        cacheCleaner.cleanup(directory)
+        cacheCleaner.cleanupWithCurrentRetention(directory)
         val file = File(directory, fileName)
         file.writeBytes(content)
         val uri = FileProvider.getUriForFile(
@@ -35,6 +35,11 @@ class AndroidExportShareFileManager @Inject constructor(
             mimeType = mimeType,
             fileName = fileName
         )
+    }
+
+    override suspend fun deleteAllTemporaryExports(): Int = withContext(Dispatchers.IO) {
+        val directory = File(context.cacheDir, EXPORT_CACHE_DIRECTORY)
+        cacheCleaner.deleteAll(directory)
     }
 
     private companion object {

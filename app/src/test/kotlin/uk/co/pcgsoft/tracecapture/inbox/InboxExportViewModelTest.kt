@@ -31,6 +31,8 @@ import uk.co.pcgsoft.tracecapture.export.file.ExportFileWriter
 import uk.co.pcgsoft.tracecapture.export.file.FileWriteResult
 import uk.co.pcgsoft.tracecapture.export.share.ExportShareFileManager
 import uk.co.pcgsoft.tracecapture.export.share.PreparedShareExport
+import uk.co.pcgsoft.tracecapture.settings.FakeSettingsRepository
+import uk.co.pcgsoft.tracecapture.settings.SettingsDefaults
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class InboxExportViewModelTest {
@@ -401,6 +403,84 @@ class InboxExportViewModelTest {
         assertFalse(viewModel.exportState.value.isPreparing)
         assertTrue(viewModel.exportState.value.showSaveOrShareChooser)
         assertEquals(null, viewModel.exportState.value.pendingShare)
+    }
+
+    // ---- Phase 7: exit selection after successful export ----------------
+
+    @Test
+    fun exitSelectionAfterSuccessDefaultsToEnabled() = runTest {
+        coEvery { repository.getActiveByIds(setOf("older")) } returns listOf(older)
+        coEvery { coordinator.prepareExport(captures = any(), format = any(), source = any()) } returns
+            success(ExportFormat.JSON)
+
+        viewModel.onExportRequested()
+        viewModel.onExportFormatSelected(ExportFormat.JSON)
+        viewModel.onSaveFileRequested(setOf("older"), listOf("older"))
+        advanceUntilIdle()
+
+        assertTrue(viewModel.exportState.value.exitSelectionAfterSuccess)
+    }
+
+    @Test
+    fun exitSelectionDisabledReflectedInState() = runTest {
+        val settingsRepo = FakeSettingsRepository(
+            SettingsDefaults.value.copy(exitSelectionAfterSuccessfulExport = false)
+        )
+        val vm = InboxExportViewModel(repository, coordinator, writer, shareManager, settingsRepo)
+        coEvery { repository.getActiveByIds(setOf("older")) } returns listOf(older)
+        coEvery { coordinator.prepareExport(captures = any(), format = any(), source = any()) } returns
+            success(ExportFormat.JSON)
+
+        vm.onExportRequested()
+        vm.onExportFormatSelected(ExportFormat.JSON)
+        vm.onSaveFileRequested(setOf("older"), listOf("older"))
+        advanceUntilIdle()
+
+        assertFalse(vm.exportState.value.exitSelectionAfterSuccess)
+    }
+
+    @Test
+    fun exitSelectionSnapshotStableDuringOperation() = runTest {
+        val settingsRepo = FakeSettingsRepository()
+        val vm = InboxExportViewModel(repository, coordinator, writer, shareManager, settingsRepo)
+        coEvery { repository.getActiveByIds(setOf("older")) } returns listOf(older)
+        coEvery { coordinator.prepareExport(captures = any(), format = any(), source = any()) } returns
+            success(ExportFormat.JSON)
+
+        vm.onExportRequested()
+        vm.onExportFormatSelected(ExportFormat.JSON)
+        vm.onSaveFileRequested(setOf("older"), listOf("older"))
+        advanceUntilIdle()
+        assertTrue(vm.exportState.value.exitSelectionAfterSuccess)
+
+        // A preference change after the operation must not rewrite the snapshot.
+        settingsRepo.emit(SettingsDefaults.value.copy(exitSelectionAfterSuccessfulExport = false))
+        advanceUntilIdle()
+        assertTrue(vm.exportState.value.exitSelectionAfterSuccess)
+    }
+
+    @Test
+    fun exitSelectionSnapshotTakenForShareFlowToo() = runTest {
+        val settingsRepo = FakeSettingsRepository(
+            SettingsDefaults.value.copy(exitSelectionAfterSuccessfulExport = false)
+        )
+        val vm = InboxExportViewModel(repository, coordinator, writer, shareManager, settingsRepo)
+        coEvery { repository.getActiveByIds(setOf("older")) } returns listOf(older)
+        coEvery { coordinator.prepareExport(captures = any(), format = any(), source = any()) } returns
+            success(ExportFormat.PLAIN_TEXT)
+        coEvery { shareManager.prepareShareExport(any(), any(), any()) } returns PreparedShareExport(
+            contentUri = mockk<android.net.Uri>(),
+            mimeType = "text/plain",
+            fileName = "export.txt"
+        )
+
+        vm.onExportRequested()
+        vm.onExportFormatSelected(ExportFormat.PLAIN_TEXT)
+        vm.onShareRequested(setOf("older"), listOf("older"))
+        advanceUntilIdle()
+
+        assertFalse(vm.exportState.value.exitSelectionAfterSuccess)
+        assertTrue(vm.exportState.value.pendingShare != null)
     }
 
     private fun success(format: ExportFormat): ExportResult.Success = ExportResult.Success(

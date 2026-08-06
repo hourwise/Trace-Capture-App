@@ -15,5 +15,6 @@ data class InboxExportState(
     val unavailableIds: Set<String> = emptySet(),
     val message: ExportMessage? = null,
     val documentLaunchConsumed: Boolean = false,
-    val shareLaunchConsumed: Boolean = false
+    val shareLaunchConsumed: Boolean = false,
+    val exitSelectionAfterSuccess: Boolean = true
 )

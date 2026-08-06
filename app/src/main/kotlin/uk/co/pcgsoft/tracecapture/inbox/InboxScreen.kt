@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -38,6 +39,7 @@ import uk.co.pcgsoft.tracecapture.export.ExportMessage
 @Composable
 fun InboxScreen(
     onCaptureSelected: (String) -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: InboxViewModel = hiltViewModel(),
     exportViewModel: InboxExportViewModel = hiltViewModel()
@@ -58,9 +60,10 @@ fun InboxScreen(
         }
     }
 
-    LaunchedEffect(exportState.message) {
-        if (exportState.message == ExportMessage.ExportSaved ||
-            exportState.message == ExportMessage.ShareChooserOpened
+    LaunchedEffect(exportState.message, exportState.exitSelectionAfterSuccess) {
+        if (exportState.exitSelectionAfterSuccess &&
+            (exportState.message == ExportMessage.ExportSaved ||
+                exportState.message == ExportMessage.ShareChooserOpened)
         ) {
             viewModel.onSelectionExit()
         }
@@ -130,6 +133,7 @@ fun InboxScreen(
         onSelectionRequested = viewModel::onSelectionRequested,
         onSelectionExit = viewModel::onSelectionExit,
         onSelectAllOrClear = viewModel::onSelectAllOrClear,
+        onOpenSettings = onOpenSettings,
         onExportRequested = exportViewModel::onExportRequested,
         onFilterSelected = viewModel::onFilterSelected,
         onSearchQueryChanged = viewModel::onSearchQueryChanged,
@@ -199,6 +203,7 @@ fun InboxContent(
     onSelectionRequested: () -> Unit = {},
     onSelectionExit: () -> Unit = {},
     onSelectAllOrClear: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     onExportRequested: () -> Unit = {},
     isPreparingExport: Boolean = false,
     modifier: Modifier = Modifier
@@ -289,6 +294,12 @@ fun InboxContent(
                     TopAppBar(
                         title = { Text(stringResource(R.string.inbox_title)) },
                         actions = {
+                            IconButton(onClick = onOpenSettings) {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = stringResource(R.string.settings)
+                                )
+                            }
                             if (!uiState.isLoading && uiState.captures.isNotEmpty()) {
                                 TextButton(onClick = onSelectionRequested) {
                                     Text(stringResource(R.string.select))

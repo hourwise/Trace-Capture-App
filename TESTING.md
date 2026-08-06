@@ -30,6 +30,14 @@ src/test/                    # Unit tests (JVM, no Android dependency)
     JsonCaptureExportFormatterTest # JSON formatting, pretty-printing, completeness
     TextCaptureExportFormatterTest # Text formatting, sections, separators, multi-capture handling
     DefaultExportCoordinatorTest # Validation, formatting, output size limits, failure modes
+  uk.co.pcgsoft.tracecapture.export.share
+    ExportCacheRetentionTest # Retention cutoffs, prefix-scoped cleanup, delete-all, fallback
+  uk.co.pcgsoft.tracecapture.settings
+    SettingsDefaultsTest     # Defaults, stable persisted values, safe fallbacks, no ordinals
+    SettingsMappingTest      # Settings enum ↔ domain mappings
+    DataStoreSettingsRepositoryTest # DataStore persistence, malformed/future values, reset, typed failures
+    SettingsViewModelTest    # Loading, dialogs, writes, failures, guards, reset, temp-file deletion
+    ExportPreferenceIntegrationTest # Preferred format for detail + bulk export, fallback, snapshots
 
 src/androidTest/             # Instrumented tests (Android device/emulator)
   uk.co.pcgsoft.tracecapture.data.local
@@ -42,6 +50,9 @@ src/androidTest/             # Instrumented tests (Android device/emulator)
   uk.co.pcgsoft.tracecapture.detail
     CaptureDetailScreenTest  # Detail UI rendering, note, status actions, delete, unsaved changes
     CaptureDetailIntegrationTest # Detail navigation, state, updates (Hilt + Compose)
+  uk.co.pcgsoft.tracecapture.settings
+    SettingsScreenTest       # Settings UI: rows, dialogs, switches, version, reset, privacy (Compose)
+    SettingsInstrumentedTest # Navigation, persistence, preferred format, default filter, deletion, reset (Hilt + Compose)
   uk.co.pcgsoft.tracecapture
     AppRoutesTest            # Encoded detail IDs round-trip into SavedStateHandle
 ```
@@ -76,6 +87,12 @@ src/androidTest/             # Instrumented tests (Android device/emulator)
 | `BulkExportSelectionTest` | ID-only selection toggling, Select all/Clear all on visible results, single authoritative reconciliation (item disappears, filter change, search change, empty result exits, no infinite emissions, stable count), small/large SavedStateHandle restoration, stale-ID pruning after first Room emission, no capture objects in SavedStateHandle, idempotent selection exit |
 | `InboxExportViewModelTest` | Active-ID resolution, visible-order export (select all, repository order ignored, missing IDs without reordering, equal-timestamp ID fallback), `SUPPLIED_CAPTURE_LIST`, unavailable IDs, one-time document launch/consumption/cancellation, write failure retry, repeated-Save guard, one-time share launch/consumption, share-chooser cancellation, `ShareChooserOpened` message, failed share preparation |
 | `RoomCaptureRepositoryTest` | `getActiveByIds` empty-set short-circuit, single ID, 900-ID single chunk, 901 two chunks, 1801 three chunks, duplicate input IDs, deleted/unknown exclusion pass-through, newest-first deterministic ordering |
+| `SettingsDefaultsTest` | Authoritative defaults, persisted-value round trips, safe fallbacks for unknown/null values, no ordinal/name persistence |
+| `SettingsMappingTest` | `DefaultInboxFilter`→`InboxFilter`, `PreferredExportFormat`→`ExportFormat` (null for ask), retention→millis |
+| `DataStoreSettingsRepositoryTest` | Defaults with no preferences, enum/boolean persistence and reload, malformed and future values, atomic reset, typed write failure, read failure defaults, corrupt file, single DataStore instance, stable persisted strings |
+| `SettingsViewModelTest` | Loading, first emission, open/dismiss every dialog, select every preference, save success/failure, switch updates, repeated-action guard, reset with confirmation enabled/disabled, reset success/failure, delete-cache confirmation, zero/files-deleted counts, deletion failure, message consumption, no raw exception exposure |
+| `ExportPreferenceIntegrationTest` | Preferred format (ask/JSON/plain) for bulk and detail export, skip format chooser, preselect format, read-failure fallback to chooser, no automatic export, stable snapshot during operation, cancellation |
+| `ExportCacheRetentionTest` | 1h/24h/7d cutoffs, setting-driven cleanup, invalid fallback to 24h, prefix-only scope, younger retained, deletion count, delete-all limited to dedicated exports, missing directory |
 | `CaptureDetailViewModelTest` | Invalid route rejection without repository access, Loading-before-first-emission, missing versus externally removed captures, note-save snapshots, status-transition validation, and one-time navigation consumption |
 | `ExportFormatTest` | JSON and PLAIN_TEXT format properties (mimeType and extension) |
 | `UtcTimestampFormatterTest` | UTC timestamp formatting from epoch millis, edge cases (0, max, recent times) |
@@ -381,5 +398,71 @@ run Android test compilation and report connected execution as zero.
 1. Tests must not depend on the order of other tests
 2. Each test should verify one behaviour
 3. Database tests must close the in-memory database after execution
+
+## Phase 7 verification status
+
+Instrumented test sources are present.
+Android test compilation: passed.
+Connected execution: zero tests because no device.
+
+JVM unit tests: full suite result reported at the end of the Phase 7 pass.
+
+### Phase 7 documented behaviour
+
+- **Settings destination**: `settings` route in the nav graph, opened from the
+  inbox top app bar with a proper content description; Back returns to the
+  inbox; `launchSingleTop` prevents duplicate destinations.
+- **DataStore architecture**: one application-scoped `DataStore<Preferences>`
+  for the `trace_capture_settings` file; `SettingsRepository` interface bound to
+  `DataStoreSettingsRepository`; ViewModels depend only on the interface.
+- **Preference keys and defaults**: see the table in `ARCHITECTURE.md`
+  (default filter `pending`, preferred format `ask_every_time`, exit-selection
+  `true`, retention `twenty_four_hours`, confirm-before-reset `true`).
+- **Default inbox filter precedence**: restored/current-session filter >
+  explicit current-session choice > stored default > Pending fallback; read once
+  so preference emissions never disrupt an active session.
+- **Preferred export behaviour**: ask-every-time keeps the chooser; JSON/plain
+  skip it; no automatic export; read-failure falls back to the chooser; stable
+  per-operation snapshot.
+- **Exit-selection preference**: bulk only; enabled exits on success, disabled
+  retains selection; failures/cancellation always retain.
+- **Cache-retention mapping**: 1h/24h/7d, prefix-scoped cleanup before new
+  shared exports, invalid preference falls back to 24h, delete-now limited to
+  dedicated export files.
+- **Reset scope**: settings only — no capture/database/temporary-file deletion
+  unless separately requested; one atomic DataStore clear.
+- **Privacy/data boundaries**: local storage, explicit-share-only capture,
+  no clipboard/accessibility scraping, no upload/sync, soft delete, retention
+  cleanup; no legal or encryption-at-rest claims.
+- **App information**: name/version/build/package from `BuildConfig`.
+- **No accounts or sync**: no login, cloud, server configuration, analytics,
+  telemetry, notifications or background jobs were added.
+
+### Phase 7 Manual Verification Checklist
+
+1. Open Settings from inbox.
+2. Change the default inbox filter.
+3. Return to inbox and confirm the current session is not unexpectedly replaced.
+4. Reopen the app / fresh inbox and confirm the new default applies.
+5. Set preferred export to JSON.
+6. Export one capture and confirm the format chooser is skipped.
+7. Set preferred export to Plain text and repeat.
+8. Restore Ask every time.
+9. Disable exit selection after export.
+10. Bulk export and confirm selection remains.
+11. Re-enable it and confirm selection exits after success.
+12. Change cache retention.
+13. Create a shared export.
+14. Delete temporary files now.
+15. Confirm saved exports remain.
+16. Open Privacy and local data.
+17. Verify app version/build information.
+18. Reset settings.
+19. Confirm captures remain.
+20. Restart the app and verify reset defaults persist.
+21. Test large text.
+22. Test TalkBack.
+23. Confirm no storage permission prompt.
+24. Confirm no account, sync or upload controls exist.
 4. Use meaningful test data that reflects real content (URLs, social media source labels)
 5. Do not write placeholder or empty test methods

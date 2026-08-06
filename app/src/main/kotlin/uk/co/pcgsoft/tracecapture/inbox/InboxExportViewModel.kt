@@ -6,6 +6,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import uk.co.pcgsoft.tracecapture.data.repository.CaptureRepository
@@ -21,6 +22,9 @@ import uk.co.pcgsoft.tracecapture.export.file.ExportFileWriter
 import uk.co.pcgsoft.tracecapture.export.file.FileWriteResult
 import uk.co.pcgsoft.tracecapture.export.share.ExportShareFileManager
 import uk.co.pcgsoft.tracecapture.export.toExportMessage
+import uk.co.pcgsoft.tracecapture.settings.DefaultSettingsRepository
+import uk.co.pcgsoft.tracecapture.settings.SettingsRepository
+import uk.co.pcgsoft.tracecapture.settings.toExportFormat
 import javax.inject.Inject
 
 @HiltViewModel
@@ -28,7 +32,8 @@ class InboxExportViewModel @Inject constructor(
     private val repository: CaptureRepository,
     private val exportCoordinator: ExportCoordinator,
     private val exportFileWriter: ExportFileWriter,
-    private val exportShareFileManager: ExportShareFileManager
+    private val exportShareFileManager: ExportShareFileManager,
+    private val settingsRepository: SettingsRepository = DefaultSettingsRepository()
 ) : ViewModel() {
 
     private val _exportState = MutableStateFlow(InboxExportState())
@@ -37,7 +42,18 @@ class InboxExportViewModel @Inject constructor(
     fun onExportRequested() {
         val state = _exportState.value
         if (state.isPreparing || state.pendingDocument != null || state.pendingShare != null) return
-        _exportState.update { it.copy(showFormatChooser = true, message = null) }
+        _exportState.update { it.copy(message = null) }
+        viewModelScope.launch {
+            val preferred = readPreferredFormat()
+            _exportState.update {
+                it.copy(
+                    showFormatChooser = preferred == null,
+                    selectedFormat = preferred,
+                    showSaveOrShareChooser = preferred != null,
+                    message = null
+                )
+            }
+        }
     }
 
     fun onExportFormatSelected(format: ExportFormat) {
@@ -70,6 +86,9 @@ class InboxExportViewModel @Inject constructor(
             it.copy(showSaveOrShareChooser = true, isPreparing = true, message = null)
         }
         viewModelScope.launch {
+            _exportState.update {
+                it.copy(exitSelectionAfterSuccess = readExitSelectionAfterSuccess())
+            }
             when (val result = prepare(selectedIds, visibleOrderIds, format)) {
                 is ExportResult.Success -> _exportState.update {
                     it.copy(
@@ -139,6 +158,9 @@ class InboxExportViewModel @Inject constructor(
             it.copy(showSaveOrShareChooser = true, isPreparing = true, message = null)
         }
         viewModelScope.launch {
+            _exportState.update {
+                it.copy(exitSelectionAfterSuccess = readExitSelectionAfterSuccess())
+            }
             when (val result = prepare(selectedIds, visibleOrderIds, format)) {
                 is ExportResult.Success -> {
                     try {
@@ -218,6 +240,18 @@ class InboxExportViewModel @Inject constructor(
 
     fun onExportMessageShown() {
         _exportState.update { it.copy(message = null) }
+    }
+
+    private suspend fun readPreferredFormat(): ExportFormat? = try {
+        settingsRepository.settings.first().preferredExportFormat.toExportFormat()
+    } catch (_: Exception) {
+        null
+    }
+
+    private suspend fun readExitSelectionAfterSuccess(): Boolean = try {
+        settingsRepository.settings.first().exitSelectionAfterSuccessfulExport
+    } catch (_: Exception) {
+        true
     }
 
     private suspend fun prepare(

@@ -15,6 +15,8 @@ import androidx.navigation.navArgument
 import dagger.hilt.android.AndroidEntryPoint
 import uk.co.pcgsoft.tracecapture.detail.CaptureDetailScreen
 import uk.co.pcgsoft.tracecapture.inbox.InboxScreen
+import uk.co.pcgsoft.tracecapture.settings.SettingsRoute
+import uk.co.pcgsoft.tracecapture.settings.SettingsScreen
 import uk.co.pcgsoft.tracecapture.ui.theme.TraceCaptureTheme
 
 object AppRoutes {
@@ -42,7 +44,17 @@ class MainActivity : ComponentActivity() {
                         InboxScreen(
                             onCaptureSelected = { captureId ->
                                 navController.navigate(AppRoutes.detail(captureId))
+                            },
+                            onOpenSettings = {
+                                navController.navigate(SettingsRoute.route) {
+                                    launchSingleTop = true
+                                }
                             }
+                        )
+                    }
+                    composable(SettingsRoute.route) {
+                        SettingsScreen(
+                            onNavigateBack = { navController.popBackStack() }
                         )
                     }
                     composable(
