@@ -184,6 +184,46 @@ class InboxIntegrationTest {
         composeTestRule.onNodeWithText(content).assertIsDisplayed()
     }
 
+    @Test
+    fun selectionAndFilteredSelectAll_showBulkExportCount() = runBlocking {
+        val pendingOne = "Pending agent one ${uniqueId()}"
+        val pendingTwo = "Pending agent two ${uniqueId()}"
+        val reviewed = "Reviewed agent ${uniqueId()}"
+        repository.save(createItem(id = uniqueId(), content = pendingOne, status = CaptureStatus.PENDING))
+        repository.save(createItem(id = uniqueId(), content = pendingTwo, status = CaptureStatus.PENDING))
+        repository.save(createItem(id = uniqueId(), content = reviewed, status = CaptureStatus.REVIEWED))
+
+        composeTestRule.onNodeWithText("Search captures").performTextInput("agent")
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Select").performClick()
+        composeTestRule.onNodeWithText("Select all").performClick()
+        composeTestRule.onNodeWithText("Export selected").performClick()
+
+        composeTestRule.onNodeWithText("Export 2 captures").assertIsDisplayed()
+        composeTestRule.onNodeWithText("JSON").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Plain text").assertIsDisplayed()
+    }
+
+    @Test
+    fun softDeleteSelectedCapture_reconcilesSelectionCount() = runBlocking {
+        val firstId = uniqueId()
+        val secondId = uniqueId()
+        val first = "Selected first ${uniqueId()}"
+        val second = "Selected second ${uniqueId()}"
+        repository.save(createItem(id = firstId, content = first))
+        repository.save(createItem(id = secondId, content = second))
+
+        composeTestRule.onNodeWithText("Select").performClick()
+        composeTestRule.onNodeWithText(first).performClick()
+        composeTestRule.onNodeWithText(second).performClick()
+        composeTestRule.onNodeWithText("2 selected").assertIsDisplayed()
+
+        repository.softDelete(firstId)
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithText("1 selected").assertIsDisplayed()
+    }
+
     private fun uniqueId(): String = UUID.randomUUID().toString().take(12)
 
     private fun createItem(

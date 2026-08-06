@@ -39,6 +39,15 @@ class RoomCaptureRepository @Inject constructor(
         return dao.getById(id)?.toDomain()
     }
 
+    override suspend fun getActiveByIds(ids: Set<String>): List<CaptureItem> {
+        if (ids.isEmpty()) return emptyList()
+
+        return ids.toList()
+            .chunked(SQLITE_BIND_CHUNK_SIZE)
+            .flatMap { chunk -> dao.getActiveByIds(chunk).toDomain() }
+            .sortedWith(compareByDescending<CaptureItem> { it.createdAtEpochMillis }.thenByDescending { it.id })
+    }
+
     override suspend fun save(item: CaptureItem) {
         val sanitized = validator.sanitize(item)
         validator.validate(sanitized)
@@ -81,5 +90,10 @@ class RoomCaptureRepository @Inject constructor(
         excludingId: String?
     ): List<CaptureItem> {
         return dao.findExactUrlDuplicates(primaryUrl, excludingId).toDomain()
+    }
+
+    private companion object {
+        // Keep below SQLite's bind-parameter limit so large bulk selections remain safe.
+        const val SQLITE_BIND_CHUNK_SIZE = 900
     }
 }

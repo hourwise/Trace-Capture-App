@@ -11,6 +11,7 @@ interface CaptureRepository {
     fun observeById(id: String): Flow<CaptureItem?>
 
     suspend fun getById(id: String): CaptureItem?
+    suspend fun getActiveByIds(ids: Set<String>): List<CaptureItem>
     suspend fun save(item: CaptureItem)
     suspend fun saveAll(items: List<CaptureItem>)
     suspend fun updateNote(id: String, note: String?)

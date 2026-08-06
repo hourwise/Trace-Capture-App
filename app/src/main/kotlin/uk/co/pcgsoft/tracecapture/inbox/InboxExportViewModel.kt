@@ -1,6 +1,5 @@
-package uk.co.pcgsoft.tracecapture.detail
+package uk.co.pcgsoft.tracecapture.inbox
 
-import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -9,6 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import uk.co.pcgsoft.tracecapture.data.repository.CaptureRepository
 import uk.co.pcgsoft.tracecapture.domain.CaptureItem
 import uk.co.pcgsoft.tracecapture.export.CreateExportDocumentRequest
 import uk.co.pcgsoft.tracecapture.export.ExportCoordinator
@@ -24,23 +24,20 @@ import uk.co.pcgsoft.tracecapture.export.toExportMessage
 import javax.inject.Inject
 
 @HiltViewModel
-class CaptureExportViewModel @Inject constructor(
+class InboxExportViewModel @Inject constructor(
+    private val repository: CaptureRepository,
     private val exportCoordinator: ExportCoordinator,
     private val exportFileWriter: ExportFileWriter,
     private val exportShareFileManager: ExportShareFileManager
 ) : ViewModel() {
 
-    private val _exportState = MutableStateFlow(DetailExportState())
-    val exportState: StateFlow<DetailExportState> = _exportState.asStateFlow()
+    private val _exportState = MutableStateFlow(InboxExportState())
+    val exportState: StateFlow<InboxExportState> = _exportState.asStateFlow()
 
     fun onExportRequested() {
         val state = _exportState.value
         if (state.isPreparing || state.pendingDocument != null || state.pendingShare != null) return
-        _exportState.update { it.copy(showFormatChooser = true) }
-    }
-
-    fun onExportBlocked() {
-        _exportState.update { it.copy(message = ExportMessage.SaveNoteFirst) }
+        _exportState.update { it.copy(showFormatChooser = true, message = null) }
     }
 
     fun onExportFormatSelected(format: ExportFormat) {
@@ -54,18 +51,25 @@ class CaptureExportViewModel @Inject constructor(
     }
 
     fun onExportDialogCancelled() {
-        _exportState.value = DetailExportState()
+        if (_exportState.value.isPreparing) return
+        _exportState.value = InboxExportState()
     }
 
-    fun onSaveFileRequested(capture: CaptureItem) {
+    fun onSaveFileRequested(selectedIds: Set<String>, visibleOrderIds: List<String>) {
         val state = _exportState.value
         val format = state.selectedFormat ?: return
-        if (state.isPreparing) return
-        _exportState.update { it.copy(showSaveOrShareChooser = false, isPreparing = true) }
+        if (state.isPreparing || selectedIds.isEmpty()) {
+            if (selectedIds.isEmpty()) _exportState.update { it.copy(message = ExportMessage.EmptyExport) }
+            return
+        }
+        _exportState.update {
+            it.copy(showSaveOrShareChooser = true, isPreparing = true, message = null)
+        }
         viewModelScope.launch {
-            when (val result = prepare(capture, format)) {
+            when (val result = prepare(selectedIds, visibleOrderIds, format)) {
                 is ExportResult.Success -> _exportState.update {
                     it.copy(
+                        showSaveOrShareChooser = false,
                         isPreparing = false,
                         pendingDocument = CreateExportDocumentRequest(
                             mimeType = result.mimeType,
@@ -76,16 +80,29 @@ class CaptureExportViewModel @Inject constructor(
                     )
                 }
                 is ExportResult.Failure -> _exportState.update {
-                    it.copy(isPreparing = false, message = result.failure.toExportMessage())
+                    it.copy(
+                        showSaveOrShareChooser = true,
+                        isPreparing = false,
+                        message = result.failure.toExportMessage()
+                    )
                 }
             }
         }
     }
 
-    fun onDocumentUriReceived(uri: Uri?) {
+    fun onDocumentLaunchStarted() {
+        _exportState.update {
+            if (it.pendingDocument == null) it else it.copy(documentLaunchConsumed = true)
+        }
+    }
+
+    fun onDocumentUriReceived(uri: android.net.Uri?) {
         val request = _exportState.value.pendingDocument ?: return
         _exportState.update {
-            it.copy(pendingDocument = null, documentLaunchConsumed = false)
+            it.copy(
+                pendingDocument = null,
+                documentLaunchConsumed = false
+            )
         }
         if (uri == null) return
         _exportState.update { it.copy(isPreparing = true) }
@@ -103,13 +120,18 @@ class CaptureExportViewModel @Inject constructor(
         }
     }
 
-    fun onShareRequested(capture: CaptureItem) {
+    fun onShareRequested(selectedIds: Set<String>, visibleOrderIds: List<String>) {
         val state = _exportState.value
         val format = state.selectedFormat ?: return
-        if (state.isPreparing) return
-        _exportState.update { it.copy(showSaveOrShareChooser = false, isPreparing = true) }
+        if (state.isPreparing || selectedIds.isEmpty()) {
+            if (selectedIds.isEmpty()) _exportState.update { it.copy(message = ExportMessage.EmptyExport) }
+            return
+        }
+        _exportState.update {
+            it.copy(showSaveOrShareChooser = true, isPreparing = true, message = null)
+        }
         viewModelScope.launch {
-            when (val result = prepare(capture, format)) {
+            when (val result = prepare(selectedIds, visibleOrderIds, format)) {
                 is ExportResult.Success -> {
                     try {
                         val prepared = exportShareFileManager.prepareShareExport(
@@ -119,6 +141,7 @@ class CaptureExportViewModel @Inject constructor(
                         )
                         _exportState.update {
                             it.copy(
+                                showSaveOrShareChooser = false,
                                 isPreparing = false,
                                 pendingShare = prepared,
                                 shareLaunchConsumed = false
@@ -126,14 +149,28 @@ class CaptureExportViewModel @Inject constructor(
                         }
                     } catch (_: Exception) {
                         _exportState.update {
-                            it.copy(isPreparing = false, message = ExportMessage.ExportFailed)
+                            it.copy(
+                                showSaveOrShareChooser = true,
+                                isPreparing = false,
+                                message = ExportMessage.ExportFailed
+                            )
                         }
                     }
                 }
                 is ExportResult.Failure -> _exportState.update {
-                    it.copy(isPreparing = false, message = result.failure.toExportMessage())
+                    it.copy(
+                        showSaveOrShareChooser = true,
+                        isPreparing = false,
+                        message = result.failure.toExportMessage()
+                    )
                 }
             }
+        }
+    }
+
+    fun onShareLaunchStarted() {
+        _exportState.update {
+            if (it.pendingShare == null) it else it.copy(shareLaunchConsumed = true)
         }
     }
 
@@ -157,28 +194,40 @@ class CaptureExportViewModel @Inject constructor(
         }
     }
 
-    fun onDocumentLaunchStarted() {
-        _exportState.update {
-            if (it.pendingDocument == null) it else it.copy(documentLaunchConsumed = true)
-        }
-    }
-
-    fun onShareLaunchStarted() {
-        _exportState.update {
-            if (it.pendingShare == null) it else it.copy(shareLaunchConsumed = true)
-        }
+    fun onUnavailableIdsHandled() {
+        _exportState.update { it.copy(unavailableIds = emptySet()) }
     }
 
     fun onExportMessageShown() {
         _exportState.update { it.copy(message = null) }
     }
 
-    private suspend fun prepare(capture: CaptureItem, format: ExportFormat): ExportResult {
+    private suspend fun prepare(
+        selectedIds: Set<String>,
+        visibleOrderIds: List<String>,
+        format: ExportFormat
+    ): ExportResult {
+        val activeCaptures = try {
+            repository.getActiveByIds(selectedIds)
+        } catch (_: Exception) {
+            return ExportResult.Failure(ExportFailure.FormattingFailed())
+        }
+        val activeIds = activeCaptures.asSequence().map { it.id }.toSet()
+        val unavailableIds = selectedIds - activeIds
+        if (unavailableIds.isNotEmpty()) {
+            _exportState.update { it.copy(unavailableIds = unavailableIds) }
+        }
+        val order = visibleOrderIds.withIndex().associate { it.value to it.index }
+        val orderedCaptures = activeCaptures.sortedWith(
+            compareBy<CaptureItem> { order[it.id] ?: Int.MAX_VALUE }
+                .thenByDescending { it.createdAtEpochMillis }
+                .thenByDescending { it.id }
+        )
         return try {
             exportCoordinator.prepareExport(
-                captures = listOf(capture),
+                captures = orderedCaptures,
                 format = format,
-                source = ExportSource.SINGLE_CAPTURE
+                source = ExportSource.SUPPLIED_CAPTURE_LIST
             )
         } catch (_: Exception) {
             ExportResult.Failure(ExportFailure.FormattingFailed())

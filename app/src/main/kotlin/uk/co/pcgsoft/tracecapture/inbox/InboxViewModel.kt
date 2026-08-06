@@ -1,5 +1,6 @@
 package uk.co.pcgsoft.tracecapture.inbox
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -14,26 +15,34 @@ import javax.inject.Inject
 @OptIn(FlowPreview::class)
 @HiltViewModel
 class InboxViewModel @Inject constructor(
-    private val repository: CaptureRepository
+    private val repository: CaptureRepository,
+    private val savedStateHandle: SavedStateHandle = SavedStateHandle()
 ) : ViewModel() {
 
     private val _filter = MutableStateFlow(InboxFilter.PENDING)
     private val _searchQuery = MutableStateFlow("")
+    private val _selection = MutableStateFlow(loadSelection())
     private val _pendingDelete = MutableStateFlow<CaptureItem?>(null)
     private val _actionInProgressIds = MutableStateFlow<Set<String>>(emptySet())
     private val _message = MutableStateFlow<InboxMessage?>(null)
+
+    init {
+        _selection
+            .onEach(::persistSelection)
+            .launchIn(viewModelScope)
+    }
 
     private val _debouncedSearchQuery = _searchQuery
         .debounce { if (it.isEmpty()) 0 else 250 }
         .distinctUntilChanged()
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val uiState: StateFlow<InboxUiState> = combine(
-        combine(_filter, _searchQuery, _debouncedSearchQuery.onStart { emit("") }) { f, s, ds -> 
-            Triple(f, s, ds) 
+    private val baseUiState: StateFlow<InboxUiState> = combine(
+        combine(_filter, _searchQuery, _debouncedSearchQuery.onStart { emit("") }) { f, s, ds ->
+            Triple(f, s, ds)
         },
-        combine(_pendingDelete, _actionInProgressIds, _message) { p, a, m -> 
-            Triple(p, a, m) 
+        combine(_pendingDelete, _actionInProgressIds, _message) { p, a, m ->
+            Triple(p, a, m)
         }
     ) { t1, t2 ->
         InternalState(
@@ -70,15 +79,38 @@ class InboxViewModel @Inject constructor(
         }
 
         baseFlow.map { captures ->
+            reconcileVisibleSelection(captures)
             InboxUiState(
                 isLoading = false,
                 filter = state.filter,
                 searchQuery = state.searchQuery,
                 captures = captures,
+                selection = _selection.value,
                 pendingDelete = state.pendingDelete,
                 actionInProgressIds = state.actionInProgressIds,
                 message = state.message
             )
+        }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = InboxUiState(isLoading = true)
+    )
+
+    val uiState: StateFlow<InboxUiState> = combine(baseUiState, _selection) { state, selection ->
+        val visibleIds = state.captures.asSequence().map { it.id }.toSet()
+        val selectedIds = selection.selectedIds.intersect(visibleIds)
+        val active = selection.isActive && state.captures.isNotEmpty()
+        state.copy(
+            selection = InboxSelectionState(
+                isActive = active,
+                selectedIds = selectedIds
+            )
+        )
+    }.onEach { rendered ->
+        val renderedSelection = rendered.selection
+        if (renderedSelection != _selection.value) {
+            setSelection(renderedSelection)
         }
     }.stateIn(
         scope = viewModelScope,
@@ -94,23 +126,75 @@ class InboxViewModel @Inject constructor(
         _searchQuery.value = query
     }
 
+    fun onSelectionRequested() {
+        val state = uiState.value
+        if (state.isLoading || state.captures.isEmpty() || state.actionInProgressIds.isNotEmpty()) return
+        setSelection(InboxSelectionState(isActive = true))
+    }
+
+    fun onCaptureLongPressed(id: String) {
+        val state = uiState.value
+        if (state.isLoading || state.actionInProgressIds.isNotEmpty()) return
+        if (!state.selection.isActive) {
+            if (state.captures.any { it.id == id }) {
+                setSelection(InboxSelectionState(isActive = true, selectedIds = setOf(id)))
+            }
+        }
+    }
+
+    fun onSelectionToggled(id: String) {
+        val state = uiState.value
+        if (!state.selection.isActive || state.actionInProgressIds.isNotEmpty()) return
+        if (state.captures.none { it.id == id }) return
+        setSelection(state.selection.copy(selectedIds = state.selection.selectedIds.toggle(id)))
+    }
+
+    fun onSelectAllOrClear() {
+        val state = uiState.value
+        if (!state.selection.isActive || state.captures.isEmpty()) return
+        val visibleIds = state.captures.mapTo(linkedSetOf()) { it.id }
+        val allSelected = state.selection.selectedIds.size == visibleIds.size &&
+            state.selection.selectedIds.containsAll(visibleIds)
+        setSelection(
+            state.selection.copy(
+                selectedIds = if (allSelected) emptySet() else visibleIds
+            )
+        )
+    }
+
+    fun onSelectionItemsUnavailable(ids: Set<String>) {
+        val unavailableCount = ids.intersect(_selection.value.selectedIds).size
+        if (unavailableCount == 0) return
+        setSelection(_selection.value.copy(selectedIds = _selection.value.selectedIds - ids))
+        _message.value = InboxMessage.SelectedCapturesUnavailable(unavailableCount)
+    }
+
+    fun onSelectionExit() {
+        setSelection(InboxSelectionState())
+    }
+
     fun markReviewed(id: String) {
+        if (_selection.value.isActive) return
         performAction(id, InboxAction.MARK_REVIEWED) { repository.markReviewed(id) }
     }
 
     fun archive(id: String) {
+        if (_selection.value.isActive) return
         performAction(id, InboxAction.ARCHIVE) { repository.archive(id) }
     }
 
     fun restoreToPending(id: String) {
+        if (_selection.value.isActive) return
         performAction(id, InboxAction.RESTORE) { repository.restoreToPending(id) }
     }
 
     fun onDeleteRequested(item: CaptureItem) {
+        if (_selection.value.isActive) return
         _pendingDelete.value = item
     }
 
     fun onDeleteConfirmed() {
+        if (_selection.value.isActive) return
         val item = _pendingDelete.value ?: return
         _pendingDelete.value = null
         performAction(item.id, InboxAction.DELETE) { repository.softDelete(item.id) }
@@ -126,6 +210,36 @@ class InboxViewModel @Inject constructor(
 
     fun onLinkCopied() {
         _message.value = InboxMessage.LinkCopied
+    }
+
+    private fun reconcileVisibleSelection(captures: List<CaptureItem>) {
+        val visibleIds = captures.asSequence().map { it.id }.toSet()
+        val current = _selection.value
+        val reconciled = current.copy(
+            isActive = current.isActive && captures.isNotEmpty(),
+            selectedIds = current.selectedIds.intersect(visibleIds)
+        )
+        if (reconciled != current) setSelection(reconciled)
+    }
+
+    private fun setSelection(selection: InboxSelectionState) {
+        _selection.value = selection
+    }
+
+    private fun persistSelection(selection: InboxSelectionState) {
+        savedStateHandle[KEY_SELECTION_ACTIVE] = selection.isActive
+        savedStateHandle[KEY_SELECTED_IDS] = if (selection.selectedIds.size <= MAX_RESTORED_SELECTION) {
+            ArrayList(selection.selectedIds)
+        } else {
+            // Keep contextual mode after recreation, but avoid a large Bundle payload.
+            ArrayList<String>()
+        }
+    }
+
+    private fun loadSelection(): InboxSelectionState {
+        val active = savedStateHandle.get<Boolean>(KEY_SELECTION_ACTIVE) ?: false
+        val ids = savedStateHandle.get<ArrayList<String>>(KEY_SELECTED_IDS)?.toSet().orEmpty()
+        return InboxSelectionState(isActive = active, selectedIds = ids)
     }
 
     private fun performAction(id: String, actionType: InboxAction, action: suspend () -> Unit) {
@@ -152,4 +266,13 @@ class InboxViewModel @Inject constructor(
         val actionInProgressIds: Set<String>,
         val message: InboxMessage?
     )
+
+    private companion object {
+        const val KEY_SELECTION_ACTIVE = "inbox_selection_active"
+        const val KEY_SELECTED_IDS = "inbox_selected_ids"
+        const val MAX_RESTORED_SELECTION = 500
+
+        fun Set<String>.toggle(id: String): Set<String> =
+            if (contains(id)) this - id else this + id
+    }
 }

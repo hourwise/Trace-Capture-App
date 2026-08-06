@@ -15,6 +15,8 @@ src/test/                    # Unit tests (JVM, no Android dependency)
     ShareCaptureViewModelTest   # ViewModel: intent processing, save, duplicate, note, retry
   uk.co.pcgsoft.tracecapture.inbox
     InboxViewModelTest       # ViewModel: filtering, search, status actions, soft delete
+    BulkExportSelectionTest  # ID selection, Select all, reconciliation, restoration policy
+    InboxExportViewModelTest  # Bulk export ordering and save/share lifecycle
   uk.co.pcgsoft.tracecapture.detail
     CaptureDetailViewModelTest # ViewModel: route validation, loading lifecycle, notes, status actions, delete, unsaved changes
   uk.co.pcgsoft.tracecapture.export
@@ -34,7 +36,7 @@ src/androidTest/             # Instrumented tests (Android device/emulator)
   uk.co.pcgsoft.tracecapture.capture
     ShareReceiverActivityTest # Quick-capture UI rendering (Hilt + Compose)
   uk.co.pcgsoft.tracecapture.inbox
-    InboxScreenTest          # Inbox UI rendering, search, filters, actions (Hilt + Compose)
+    InboxScreenTest          # Inbox UI rendering, search, filters, actions, selection (Hilt + Compose)
   uk.co.pcgsoft.tracecapture.detail
     CaptureDetailScreenTest  # Detail UI rendering, note, status actions, delete, unsaved changes
     CaptureDetailIntegrationTest # Detail navigation, state, updates (Hilt + Compose)
@@ -69,6 +71,8 @@ src/androidTest/             # Instrumented tests (Android device/emulator)
 | `SharedCaptureProcessorTest` | Structured Ready/Rejected results, all rejection propagations |
 | `ShareCaptureViewModelTest` | Intent processing, note editing (2000-char enforcement), save workflow, duplicate detection (newest selected, text-only skips), repeated-save guard, failure/retry, domain properties of saved item |
 | `InboxViewModelTest` | Default filter, filter changes, search functionality, status mutations (mark reviewed, archive, restore), soft delete confirmation, action progress guard, error handling, live Room updates |
+| `BulkExportSelectionTest` | ID-only selection toggling, Select all/Clear all on visible results, result reconciliation, small SavedStateHandle restoration, bounded large-selection restoration |
+| `InboxExportViewModelTest` | Active-ID resolution, visible ordering, `SUPPLIED_CAPTURE_LIST`, JSON/plain-text paths, unavailable IDs, document cancellation, prepared share state |
 | `CaptureDetailViewModelTest` | Invalid route rejection without repository access, Loading-before-first-emission, missing versus externally removed captures, note-save snapshots, status-transition validation, and one-time navigation consumption |
 | `ExportFormatTest` | JSON and PLAIN_TEXT format properties (mimeType and extension) |
 | `UtcTimestampFormatterTest` | UTC timestamp formatting from epoch millis, edge cases (0, max, recent times) |
@@ -127,8 +131,8 @@ tracked.
 
 ## What is not yet tested
 
-- Export Android integration tests (FileProvider, share intents, document picker)
-- Export ViewModel lifecycle (`pendingDocument` and `pendingShare` consumption)
+- Full external-app export Android integration (FileProvider, share intents, document picker) requires a connected device/emulator; source coverage and compile coverage are present.
+- External chooser behaviour with real Gmail or another target app
 - Settings (Phase 7)
 
 Phase 6A provides comprehensive unit test coverage for export formatting, validation,
@@ -287,6 +291,42 @@ Do not add platform-specific scraping to fix unusual share text from any source.
 9. **Message feedback**: Verify export success/failure messages appear after picker or share.
 10. **State after export**: Verify detail screen remains stable and can export again immediately.
 11. **Rotate during export**: Trigger export preparation and rotate device; verify state is preserved.
+
+## Phase 6B Manual Verification Checklist (Inbox selection and bulk export)
+
+1. Save five captures.
+2. Open Pending inbox.
+3. Tap **Select**.
+4. Select two captures.
+5. Deselect one.
+6. Use **Select all**, then **Clear all**.
+7. Search by domain and use **Select all** on matching results.
+8. Export selected as JSON and save; confirm the document has only selected captures and a `.json` extension.
+9. Export selected as plain text; confirm numbering follows visible newest-first order and the extension is `.txt`.
+10. Share selected JSON to Gmail or another compatible app; confirm one attachment and no storage permission prompt.
+11. Cancel the document picker and verify selection remains.
+12. Rotate while selection is active; verify up to 500 IDs restore. For more than 500, verify contextual mode remains and re-selection is required.
+13. Soft-delete a selected item and verify the count reconciles.
+14. Change filter while selecting and verify IDs outside the visible result are removed.
+15. Test 100+ selected captures and confirm no visible freeze or silent truncation.
+16. Test TalkBack selection announcements, Select all/Clear all, and disabled Export with zero selected.
+17. Test large font scaling; confirm selected count and actions remain readable.
+18. Confirm bulk status, archive, and delete actions are not present in selection mode.
+
+## Phase 6B verification commands
+
+Run sequentially with the stable single-worker configuration:
+
+```powershell
+.\gradlew.bat test --no-daemon --max-workers=1 --stacktrace --console=plain
+.\gradlew.bat assembleDebug --no-daemon --max-workers=1 --stacktrace --console=plain
+.\gradlew.bat lintDebug --no-daemon --max-workers=1 --stacktrace --console=plain
+.\gradlew.bat compileDebugAndroidTestKotlin --no-daemon --max-workers=1 --stacktrace --console=plain
+.\gradlew.bat connectedDebugAndroidTest --no-daemon --max-workers=1 --stacktrace --console=plain
+```
+
+The connected test command requires a device or emulator. If none is available,
+run Android test compilation and report connected execution as zero.
 
 ## Test guidelines
 

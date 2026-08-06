@@ -120,6 +120,8 @@ fun CaptureDetailScreen(
 
     LaunchedEffect(exportState.pendingDocument) {
         val request = exportState.pendingDocument ?: return@LaunchedEffect
+        if (exportState.documentLaunchConsumed) return@LaunchedEffect
+        exportViewModel.onDocumentLaunchStarted()
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = request.mimeType
@@ -134,6 +136,8 @@ fun CaptureDetailScreen(
 
     LaunchedEffect(exportState.pendingShare) {
         val share = exportState.pendingShare ?: return@LaunchedEffect
+        if (exportState.shareLaunchConsumed) return@LaunchedEffect
+        exportViewModel.onShareLaunchStarted()
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = share.mimeType
             putExtra(Intent.EXTRA_STREAM, share.contentUri)

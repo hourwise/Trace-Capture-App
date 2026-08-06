@@ -4,9 +4,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Rule
@@ -180,4 +183,90 @@ class InboxScreenTest {
         composeTestRule.onNodeWithText("Delete").assertIsDisplayed()
         composeTestRule.onNodeWithText("Test Capture 1", substring = true).assertIsDisplayed()
     }
+
+    @Test
+    fun selectionMode_showsContextualActionsAndSelectedCount() {
+        var state by mutableStateOf(
+            InboxUiState(
+                isLoading = false,
+                captures = testCaptures,
+                filter = InboxFilter.ALL
+            )
+        )
+        composeTestRule.setContent {
+            TraceCaptureTheme {
+                InboxContent(
+                    uiState = state,
+                    onCaptureSelected = { id ->
+                        state = state.copy(
+                            selection = state.selection.copy(
+                                selectedIds = state.selection.selectedIds.toggleForTest(id)
+                            )
+                        )
+                    },
+                    onFilterSelected = {},
+                    onSearchQueryChanged = {},
+                    onMarkReviewed = {},
+                    onArchive = {},
+                    onRestore = {},
+                    onDeleteRequested = {},
+                    onDeleteConfirmed = {},
+                    onDeleteCancelled = {},
+                    onMessageShown = {},
+                    onLinkCopied = {},
+                    onSelectionRequested = {
+                        state = state.copy(selection = InboxSelectionState(isActive = true))
+                    }
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Select").performClick()
+        composeTestRule.onNodeWithText("Select all").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Export selected").assertIsDisplayed()
+
+        composeTestRule.onNodeWithText("Test Capture 1").performClick()
+        composeTestRule.onNodeWithText("1 selected").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription("Capture actions").assertDoesNotExist()
+    }
+
+    @Test
+    fun longPress_entersSelectionModeAndSelectsCard() {
+        var state by mutableStateOf(
+            InboxUiState(
+                isLoading = false,
+                captures = testCaptures,
+                filter = InboxFilter.ALL
+            )
+        )
+        composeTestRule.setContent {
+            TraceCaptureTheme {
+                InboxContent(
+                    uiState = state,
+                    onCaptureSelected = {},
+                    onCaptureLongPressed = { id ->
+                        state = state.copy(
+                            selection = InboxSelectionState(isActive = true, selectedIds = setOf(id))
+                        )
+                    },
+                    onFilterSelected = {},
+                    onSearchQueryChanged = {},
+                    onMarkReviewed = {},
+                    onArchive = {},
+                    onRestore = {},
+                    onDeleteRequested = {},
+                    onDeleteConfirmed = {},
+                    onDeleteCancelled = {},
+                    onMessageShown = {},
+                    onLinkCopied = {}
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Test Capture 1").performTouchInput { longClick() }
+        composeTestRule.onNodeWithText("1 selected").assertIsDisplayed()
+    }
+
+    private fun Set<String>.toggleForTest(id: String): Set<String> =
+        if (contains(id)) this - id else this + id
 }

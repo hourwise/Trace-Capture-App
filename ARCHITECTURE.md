@@ -71,7 +71,8 @@ confirmation. A future settings phase may add configurable quick-save.
 ## ViewModel ownership
 
 - `ShareCaptureViewModel`: Injected into `ShareReceiverActivity`. Owns intent processing, note editing, and save coordination for new captures.
-- `InboxViewModel`: Injected into `InboxScreen`. Owns inbox filtering, search, and status mutation coordination (mark reviewed, archive, restore, delete).
+- `InboxViewModel`: Injected into `InboxScreen`. Owns inbox filtering, search, status mutation coordination (mark reviewed, archive, restore, delete), and ID-based selection state.
+- `InboxExportViewModel`: Injected into `InboxScreen`. Owns bulk export workflow state while reusing the Phase 6A export coordinator, file writer, and share-file manager.
 - `CaptureDetailViewModel`: Injected into `CaptureDetailScreen`. Owns capture observation by ID, note editing, status transitions, soft deletion, and unsaved-changes protection.
 
 The composable observes `uiState` and renders the appropriate screen. No Room
@@ -106,6 +107,33 @@ The `InboxScreen` provides a view of all non-deleted captures. It supports:
 - **Observation**: Uses Room Flows to provide a live-updating list that reacts to external changes and internal actions.
 
 The `InboxViewModel` combines filter and search states with repository flows to produce the final `InboxUiState`. Search results are filtered by the active status selection to ensure consistency.
+
+### Inbox selection (Phase 6B)
+
+Selection belongs to `InboxViewModel` and stores only `Set<String>` capture IDs in
+`InboxSelectionState`. The explicit Select action and card long-press enter
+selection mode. Inactive card taps navigate to detail; active card taps toggle the
+ID. Per-item overflow menus are hidden while selection is active. Back and the
+contextual app-bar back action clear IDs without changing the current filter or
+search query.
+
+Select all operates on the current `uiState.captures` only, so it respects the
+active status filter and debounced search result. It becomes Clear all when every
+visible result is selected. Room emissions reconcile selected IDs against the
+current result set; IDs that move outside a filter, are deleted, or disappear are
+removed. If the visible result becomes empty, selection mode exits.
+
+SavedStateHandle persists selection mode and up to 500 IDs. A larger selection
+keeps contextual mode after recreation but restores with no IDs to avoid a
+`TransactionTooLargeException`.
+
+At export time, `InboxExportViewModel` resolves IDs through
+`CaptureRepository.getActiveByIds()` rather than trusting card snapshots. The
+Room implementation uses a single `IN` query per 900-ID chunk, excludes deleted
+rows, and the export ViewModel applies the visible inbox ID order so JSON arrays
+and plain-text numbering match the screen order. Missing records are excluded
+and reconciled from selection. Phase 6B includes export only; there are no bulk
+status, archive, or delete actions.
 
 ## Capture Actions
 
@@ -318,6 +346,33 @@ The export flow is coordinated by `CaptureExportViewModel` and consists of:
 Both `pending*` fields are cleared after their respective callback/result,
 ensuring no stale re-exports on screen rotation or restoration.
 
+### Bulk export (Phase 6B)
+
+Bulk export follows the existing pipeline and does not introduce a second
+formatter:
+
+```text
+selected IDs
+  -> repository active-ID resolution
+  -> visible-order reconciliation
+  -> ExportCoordinator.prepareExport(..., SUPPLIED_CAPTURE_LIST)
+  -> existing JSON/plain-text formatter
+  -> existing SAF writer or FileProvider share manager
+```
+
+The bulk format chooser reports the selected count. Save uses
+`ACTION_CREATE_DOCUMENT`, the existing MIME type and suggested extension, then
+writes bytes through `ExportFileWriter`. Picker cancellation consumes the
+pending request without an error and leaves selection intact. Share creates one
+cache file and shares one `content://` FileProvider URI via `ACTION_SEND` with
+read permission; the export is never copied into `EXTRA_TEXT`.
+
+Document and share requests are marked consumed before launching so Activity
+recreation does not launch a duplicate picker or Sharesheet. Successful save or
+share exits selection mode; preparation, cancellation, and failures leave the
+selection available for retry. Bulk exports retain schema version 1 and use the
+stable `supplied_capture_list` source value.
+
 ### Document picker and share intents
 
 - **Save to file**: `CreateDocument` activity contract receives a URI. If
@@ -351,3 +406,9 @@ from version control along with Gradle and Android Studio local build files.
 | JSON for detected URLs list | Handles arbitrary URLs without delimiter-escaping issues |
 | No destructive migration | Preserves user data across schema changes |
 | Separate domain model from entity | Allows the domain to evolve independently of the database schema |
+
+## Phase boundaries
+
+Phase 7 settings, quick-save configuration, import, synchronisation, cloud
+upload, and authentication remain deferred. Phase 6B adds export-only
+selection, does not modify the Room schema, and requests no storage permission.

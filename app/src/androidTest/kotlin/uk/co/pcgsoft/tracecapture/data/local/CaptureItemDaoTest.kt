@@ -297,4 +297,22 @@ class CaptureItemDaoTest {
         val direct = dao.getById("hidden-check")
         assertNotNull(direct)
     }
+
+    @Test
+    fun activeByIdsReturnsOnlyKnownActiveItemsInNewestFirstOrder() = runTest {
+        val older = createItem(id = "active-older").copy(createdAtEpochMillis = 1000L)
+        val newer = createItem(id = "active-newer").copy(createdAtEpochMillis = 2000L)
+        val deleted = createItem(id = "active-deleted").copy(createdAtEpochMillis = 3000L)
+        dao.insertAll(listOf(older, newer, deleted).map { it.toEntity() })
+        dao.softDelete(deleted.id, System.currentTimeMillis())
+
+        val result = dao.getActiveByIds(listOf("missing", "active-older", "active-deleted", "active-newer"))
+
+        assertEquals(listOf("active-newer", "active-older"), result.map { it.id })
+    }
+
+    @Test
+    fun activeByIdsWithEmptyIdsReturnsEmpty() = runTest {
+        assertTrue(dao.getActiveByIds(emptyList()).isEmpty())
+    }
 }

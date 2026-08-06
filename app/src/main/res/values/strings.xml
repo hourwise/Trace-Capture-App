@@ -53,6 +53,26 @@
     <string name="no_app_found">No compatible application found to open this link.</string>
     <string name="capture_actions">Capture actions</string>
     <string name="text_capture_label">Text capture</string>
+    <string name="select">Select</string>
+    <string name="exit_selection">Exit selection</string>
+    <string name="select_all">Select all</string>
+    <string name="clear_all">Clear all</string>
+    <string name="export_selected">Export selected</string>
+    <string name="selection_selected">Selected</string>
+    <string name="selection_not_selected">Not selected</string>
+    <string name="bulk_export_progress">Preparing bulk export…</string>
+    <plurals name="selected_count">
+        <item quantity="one">1 selected</item>
+        <item quantity="other">%1$d selected</item>
+    </plurals>
+    <plurals name="export_selected_title">
+        <item quantity="one">Export 1 capture</item>
+        <item quantity="other">Export %1$d captures</item>
+    </plurals>
+    <plurals name="selected_captures_unavailable">
+        <item quantity="one">1 selected capture is no longer available</item>
+        <item quantity="other">%1$d selected captures are no longer available</item>
+    </plurals>
 
     <string name="detail_title">Capture Detail</string>
     <string name="back">Back</string>

@@ -1,6 +1,8 @@
 package uk.co.pcgsoft.tracecapture.inbox
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -32,6 +35,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,9 +53,13 @@ import java.util.Date
 import java.util.Locale
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 fun CaptureCard(
     item: CaptureItem,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
     onCaptureSelected: (String) -> Unit,
+    onLongClick: () -> Unit = {},
     onMarkReviewed: (String) -> Unit,
     onArchive: (String) -> Unit,
     onRestore: (String) -> Unit,
@@ -57,11 +69,38 @@ fun CaptureCard(
     modifier: Modifier = Modifier
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    val selectionStateDescription = if (selected) {
+        stringResource(R.string.selection_selected)
+    } else {
+        stringResource(R.string.selection_not_selected)
+    }
 
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clickable { onCaptureSelected(item.id) },
+            .combinedClickable(
+                onClick = { onCaptureSelected(item.id) },
+                onLongClick = onLongClick
+            )
+            .semantics {
+                if (selectionMode) {
+                    this.selected = selected
+                    role = Role.Checkbox
+                    stateDescription = selectionStateDescription
+                }
+            },
+        border = if (selectionMode && selected) {
+            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            null
+        },
+        colors = CardDefaults.cardColors(
+            containerColor = if (selectionMode && selected) {
+                MaterialTheme.colorScheme.secondaryContainer
+            } else {
+                MaterialTheme.colorScheme.surface
+            }
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -70,6 +109,16 @@ fun CaptureCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (selectionMode) {
+                    Checkbox(
+                        checked = selected,
+                        onCheckedChange = { onCaptureSelected(item.id) },
+                        modifier = Modifier.semantics {
+                            stateDescription = selectionStateDescription
+                        }
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
                 val primaryLine = getPrimaryLine(item)
                 Text(
                     text = primaryLine,
@@ -80,24 +129,26 @@ fun CaptureCard(
                     modifier = Modifier.weight(1f)
                 )
 
-                Box {
-                    IconButton(onClick = { showMenu = true }) {
-                        Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = stringResource(R.string.capture_actions)
+                if (!selectionMode) {
+                    Box {
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = stringResource(R.string.capture_actions)
+                            )
+                        }
+                        CaptureActionMenu(
+                            item = item,
+                            expanded = showMenu,
+                            onDismiss = { showMenu = false },
+                            onMarkReviewed = onMarkReviewed,
+                            onArchive = onArchive,
+                            onRestore = onRestore,
+                            onDelete = onDelete,
+                            onOpenUrl = onOpenUrl,
+                            onCopyUrl = onCopyUrl
                         )
                     }
-                    CaptureActionMenu(
-                        item = item,
-                        expanded = showMenu,
-                        onDismiss = { showMenu = false },
-                        onMarkReviewed = onMarkReviewed,
-                        onArchive = onArchive,
-                        onRestore = onRestore,
-                        onDelete = onDelete,
-                        onOpenUrl = onOpenUrl,
-                        onCopyUrl = onCopyUrl
-                    )
                 }
             }
 
