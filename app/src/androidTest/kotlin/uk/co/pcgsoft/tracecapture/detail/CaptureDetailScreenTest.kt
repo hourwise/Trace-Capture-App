@@ -60,7 +60,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -86,7 +88,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -113,7 +117,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -144,7 +150,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -171,7 +179,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -203,7 +213,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -227,7 +239,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -253,7 +267,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -280,7 +296,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -307,7 +325,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -334,7 +354,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -362,7 +384,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -390,7 +414,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = { reviewed = true },
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -418,7 +444,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = { archived = true },
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -447,7 +475,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = { restored = true },
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -476,7 +506,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -504,7 +536,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -532,7 +566,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }
@@ -559,7 +595,9 @@ class CaptureDetailScreenTest {
                     onMarkReviewed = {},
                     onArchive = {},
                     onRestore = {},
-                    onDelete = {}
+                    onDelete = {},
+                    onExport = {},
+                    isPreparingExport = false
                 )
             }
         }

@@ -58,8 +58,12 @@ class InboxExportViewModel @Inject constructor(
     fun onSaveFileRequested(selectedIds: Set<String>, visibleOrderIds: List<String>) {
         val state = _exportState.value
         val format = state.selectedFormat ?: return
-        if (state.isPreparing || selectedIds.isEmpty()) {
+        if (state.isPreparing || state.pendingDocument != null || state.pendingShare != null) {
             if (selectedIds.isEmpty()) _exportState.update { it.copy(message = ExportMessage.EmptyExport) }
+            return
+        }
+        if (selectedIds.isEmpty()) {
+            _exportState.update { it.copy(message = ExportMessage.EmptyExport) }
             return
         }
         _exportState.update {
@@ -123,8 +127,12 @@ class InboxExportViewModel @Inject constructor(
     fun onShareRequested(selectedIds: Set<String>, visibleOrderIds: List<String>) {
         val state = _exportState.value
         val format = state.selectedFormat ?: return
-        if (state.isPreparing || selectedIds.isEmpty()) {
+        if (state.isPreparing || state.pendingDocument != null || state.pendingShare != null) {
             if (selectedIds.isEmpty()) _exportState.update { it.copy(message = ExportMessage.EmptyExport) }
+            return
+        }
+        if (selectedIds.isEmpty()) {
+            _exportState.update { it.copy(message = ExportMessage.EmptyExport) }
             return
         }
         _exportState.update {
@@ -179,7 +187,17 @@ class InboxExportViewModel @Inject constructor(
             it.copy(
                 pendingShare = null,
                 shareLaunchConsumed = false,
-                message = ExportMessage.ExportShared
+                message = ExportMessage.ShareChooserOpened
+            )
+        }
+    }
+
+    fun onShareCancelled() {
+        _exportState.update {
+            it.copy(
+                pendingShare = null,
+                shareLaunchConsumed = false,
+                message = null
             )
         }
     }

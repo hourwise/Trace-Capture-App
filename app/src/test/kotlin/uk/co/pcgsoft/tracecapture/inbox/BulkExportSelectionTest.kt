@@ -9,7 +9,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -147,13 +149,219 @@ class BulkExportSelectionTest {
         restoredJob.cancel()
     }
 
-    private fun item(id: String, createdAt: Long) = CaptureItem(
+    @Test
+    fun selectionUpdatesExactlyOnceWhenItemDisappears() = runTest {
+        pendingFlow.value = listOf(item("a", 2_000L), item("b", 1_000L))
+        val viewModel = InboxViewModel(repository)
+        var emissions = 0
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect { emissions++ }
+        }
+        advanceUntilIdle()
+        viewModel.onSelectionRequested()
+        viewModel.onSelectionToggled("a")
+        viewModel.onSelectionToggled("b")
+        advanceUntilIdle()
+        assertEquals(setOf("a", "b"), viewModel.uiState.value.selection.selectedIds)
+
+        val before = emissions
+        pendingFlow.value = listOf(item("b", 1_000L)) // "a" disappears
+        advanceUntilIdle()
+        val after = emissions
+
+        assertEquals(setOf("b"), viewModel.uiState.value.selection.selectedIds)
+        assertTrue(viewModel.uiState.value.selection.isActive)
+        // One reconcile write plus its render: bounded, never a storm.
+        assertTrue(after - before <= 2)
+        // Fully settled: no self-sustaining feedback.
+        advanceUntilIdle()
+        assertEquals(after, emissions)
+        job.cancel()
+    }
+
+    @Test
+    fun reconciliationSettlesWithoutInfiniteEmissions() = runTest {
+        pendingFlow.value = listOf(item("a", 3_000L), item("b", 2_000L))
+        val viewModel = InboxViewModel(repository)
+        var emissions = 0
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.uiState.collect { emissions++ }
+        }
+        advanceUntilIdle()
+        viewModel.onSelectionRequested()
+        viewModel.onSelectionToggled("a")
+        viewModel.onSelectionToggled("b")
+        advanceUntilIdle()
+
+        // Settled: further idle advancement must not produce any emissions, proving
+        // there is no self-sustaining write-back loop.
+        advanceUntilIdle()
+        val settled = emissions
+        advanceUntilIdle()
+        assertEquals(settled, emissions)
+
+        // A normal Room emission that does not affect the selection renders exactly
+        // once and then settles again.
+        val before = emissions
+        pendingFlow.value = listOf(item("a", 3_000L), item("b", 2_000L), item("c", 1_000L))
+        advanceUntilIdle()
+        val after = emissions
+        assertEquals(before + 1, after)
+        advanceUntilIdle()
+        assertEquals(after, emissions)
+        job.cancel()
+    }
+
+    @Test
+    fun filterChangeReconcilesSelection() = runTest {
+        val pending = item("pending", 2_000L)
+        val reviewed = item("reviewed", 1_000L, status = CaptureStatus.REVIEWED)
+        pendingFlow.value = listOf(pending)
+        reviewedFlow.value = listOf(reviewed)
+        val viewModel = InboxViewModel(repository)
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect() }
+        advanceUntilIdle()
+        viewModel.onSelectionRequested()
+        viewModel.onSelectionToggled("pending")
+        assertEquals(setOf("pending"), viewModel.uiState.value.selection.selectedIds)
+
+        viewModel.onFilterSelected(InboxFilter.REVIEWED)
+        advanceUntilIdle()
+        assertEquals(emptySet<String>(), viewModel.uiState.value.selection.selectedIds)
+        assertTrue(viewModel.uiState.value.selection.isActive)
+        job.cancel()
+    }
+
+    @Test
+    fun searchChangeReconcilesSelection() = runTest {
+        val searchFlow = MutableStateFlow<List<CaptureItem>>(emptyList())
+        every { repository.search("alpha") } returns searchFlow
+        pendingFlow.value = listOf(item("match", 2_000L), item("other", 1_000L))
+        val viewModel = InboxViewModel(repository)
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect() }
+        advanceUntilIdle()
+        viewModel.onSelectionRequested()
+        viewModel.onSelectionToggled("match")
+        assertEquals(setOf("match"), viewModel.uiState.value.selection.selectedIds)
+
+        // Switch to a search whose results exclude the selected item.
+        viewModel.onSearchQueryChanged("alpha")
+        searchFlow.value = listOf(item("other", 1_000L))
+        advanceTimeBy(250)
+        runCurrent()
+        advanceUntilIdle()
+
+        assertEquals(emptySet<String>(), viewModel.uiState.value.selection.selectedIds)
+        assertTrue(viewModel.uiState.value.selection.isActive)
+        job.cancel()
+    }
+
+    @Test
+    fun emptyResultExitsSelectionMode() = runTest {
+        pendingFlow.value = listOf(item("a", 2_000L))
+        val viewModel = InboxViewModel(repository)
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect() }
+        advanceUntilIdle()
+        viewModel.onSelectionRequested()
+        assertTrue(viewModel.uiState.value.selection.isActive)
+
+        pendingFlow.value = emptyList()
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.selection.isActive)
+        assertTrue(viewModel.uiState.value.selection.selectedIds.isEmpty())
+        job.cancel()
+    }
+
+    @Test
+    fun selectedCountStableDuringNormalRoomEmissions() = runTest {
+        pendingFlow.value = listOf(item("a", 3_000L), item("b", 2_000L))
+        val viewModel = InboxViewModel(repository)
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect() }
+        advanceUntilIdle()
+        viewModel.onSelectionRequested()
+        viewModel.onSelectionToggled("a")
+        viewModel.onSelectionToggled("b")
+        advanceUntilIdle()
+        assertEquals(2, viewModel.uiState.value.selection.selectedIds.size)
+
+        // Normal Room emissions (new unselected items appearing) must not disturb
+        // the selected set or its count.
+        repeat(5) { index ->
+            pendingFlow.value = listOf(
+                item("a", 3_000L),
+                item("b", 2_000L),
+                item("c-$index", 1_000L - index)
+            )
+            advanceUntilIdle()
+            assertEquals(2, viewModel.uiState.value.selection.selectedIds.size)
+        }
+        assertEquals(setOf("a", "b"), viewModel.uiState.value.selection.selectedIds)
+        job.cancel()
+    }
+
+    @Test
+    fun staleRestoredIdsAreRemovedAfterFirstRoomEmission() = runTest {
+        pendingFlow.value = listOf(item("fresh", 2_000L))
+        val savedState = SavedStateHandle()
+        savedState["inbox_selection_active"] = true
+        savedState["inbox_selected_ids"] = ArrayList(listOf("stale", "fresh"))
+        val viewModel = InboxViewModel(repository, savedState)
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect() }
+        advanceUntilIdle()
+
+        // The first real Room emission prunes the stale ID but keeps the fresh one.
+        assertEquals(setOf("fresh"), viewModel.uiState.value.selection.selectedIds)
+        assertTrue(viewModel.uiState.value.selection.isActive)
+        job.cancel()
+    }
+
+    @Test
+    fun savedStateHandleStoresOnlyScalarsAndIdList() = runTest {
+        pendingFlow.value = listOf(item("a", 2_000L))
+        val savedState = SavedStateHandle()
+        val viewModel = InboxViewModel(repository, savedState)
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect() }
+        advanceUntilIdle()
+        viewModel.onSelectionRequested()
+        viewModel.onSelectionToggled("a")
+        advanceUntilIdle()
+
+        // Only the two scalar/id-list keys may enter SavedStateHandle — never capture objects.
+        assertEquals(setOf("inbox_selection_active", "inbox_selected_ids"), savedState.keys())
+        assertEquals(true, savedState.get<Boolean>("inbox_selection_active"))
+        assertEquals(listOf("a"), savedState.get<ArrayList<String>>("inbox_selected_ids"))
+        job.cancel()
+    }
+
+    @Test
+    fun selectionExitIsIdempotent() = runTest {
+        pendingFlow.value = listOf(item("a", 2_000L))
+        val viewModel = InboxViewModel(repository)
+        val job = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { viewModel.uiState.collect() }
+        advanceUntilIdle()
+        viewModel.onSelectionRequested()
+        assertTrue(viewModel.uiState.value.selection.isActive)
+
+        viewModel.onSelectionExit()
+        viewModel.onSelectionExit()
+        viewModel.onSelectionExit()
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.selection.isActive)
+        assertTrue(viewModel.uiState.value.selection.selectedIds.isEmpty())
+        job.cancel()
+    }
+
+    private fun item(
+        id: String,
+        createdAt: Long,
+        status: CaptureStatus = CaptureStatus.PENDING
+    ) = CaptureItem(
         id = id,
         createdAtEpochMillis = createdAt,
         updatedAtEpochMillis = createdAt,
         originalContent = id,
         captureType = CaptureType.TEXT,
-        status = CaptureStatus.PENDING,
+        status = status,
         primaryUrl = null,
         detectedUrls = emptyList(),
         sourcePackageName = null,

@@ -37,7 +37,7 @@ class InboxViewModel @Inject constructor(
         .distinctUntilChanged()
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    private val baseUiState: StateFlow<InboxUiState> = combine(
+    private val baseUiState: StateFlow<BaseUiState> = combine(
         combine(_filter, _searchQuery, _debouncedSearchQuery.onStart { emit("") }) { f, s, ds ->
             Triple(f, s, ds)
         },
@@ -78,14 +78,14 @@ class InboxViewModel @Inject constructor(
             }
         }
 
+        // Pure projection of visible captures + meta. Selection reconciliation happens in
+        // exactly one place: the final combine below. Nothing here mutates _selection.
         baseFlow.map { captures ->
-            reconcileVisibleSelection(captures)
-            InboxUiState(
+            BaseUiState(
                 isLoading = false,
                 filter = state.filter,
                 searchQuery = state.searchQuery,
                 captures = captures,
-                selection = _selection.value,
                 pendingDelete = state.pendingDelete,
                 actionInProgressIds = state.actionInProgressIds,
                 message = state.message
@@ -94,24 +94,35 @@ class InboxViewModel @Inject constructor(
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
-        initialValue = InboxUiState(isLoading = true)
+        initialValue = BaseUiState(isLoading = true)
     )
 
-    val uiState: StateFlow<InboxUiState> = combine(baseUiState, _selection) { state, selection ->
-        val visibleIds = state.captures.asSequence().map { it.id }.toSet()
-        val selectedIds = selection.selectedIds.intersect(visibleIds)
-        val active = selection.isActive && state.captures.isNotEmpty()
-        state.copy(
-            selection = InboxSelectionState(
-                isActive = active,
-                selectedIds = selectedIds
+    // Single authoritative reconciliation path: the latest visible captures reconcile the
+    // persisted selection once, the reconciled result is stored once, and UI state renders
+    // from that result. There is no write-back from rendered state, so there is no
+    // two-way feedback loop. Reconciliation is skipped while loading so an initial empty
+    // emission can never clobber a selection restored from SavedStateHandle.
+    val uiState: StateFlow<InboxUiState> = combine(baseUiState, _selection) { base, selection ->
+        val reconciled = if (base.isLoading) {
+            selection
+        } else {
+            reconcileSelection(
+                selection = selection,
+                visibleIds = base.captures.asSequence().map { it.id }.toSet(),
+                hasVisibleCaptures = base.captures.isNotEmpty()
             )
-        )
-    }.onEach { rendered ->
-        val renderedSelection = rendered.selection
-        if (renderedSelection != _selection.value) {
-            setSelection(renderedSelection)
         }
+        if (reconciled != selection) setSelection(reconciled)
+        InboxUiState(
+            isLoading = base.isLoading,
+            filter = base.filter,
+            searchQuery = base.searchQuery,
+            captures = base.captures,
+            selection = reconciled,
+            pendingDelete = base.pendingDelete,
+            actionInProgressIds = base.actionInProgressIds,
+            message = base.message
+        )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -170,7 +181,12 @@ class InboxViewModel @Inject constructor(
     }
 
     fun onSelectionExit() {
-        setSelection(InboxSelectionState())
+        val current = _selection.value
+        // Idempotent: repeated calls (e.g. a LaunchedEffect re-running after recreation)
+        // must not produce redundant persistence writes or re-enter selection.
+        if (current.isActive || current.selectedIds.isNotEmpty()) {
+            setSelection(InboxSelectionState())
+        }
     }
 
     fun markReviewed(id: String) {
@@ -212,14 +228,18 @@ class InboxViewModel @Inject constructor(
         _message.value = InboxMessage.LinkCopied
     }
 
-    private fun reconcileVisibleSelection(captures: List<CaptureItem>) {
-        val visibleIds = captures.asSequence().map { it.id }.toSet()
-        val current = _selection.value
-        val reconciled = current.copy(
-            isActive = current.isActive && captures.isNotEmpty(),
-            selectedIds = current.selectedIds.intersect(visibleIds)
-        )
-        if (reconciled != current) setSelection(reconciled)
+    /**
+     * Pure reconciliation: intersects persisted IDs with the visible IDs and exits
+     * selection mode when nothing is visible. Never mutates state itself; the caller
+     * (the single combine below) stores the result once.
+     */
+    private fun reconcileSelection(
+        selection: InboxSelectionState,
+        visibleIds: Set<String>,
+        hasVisibleCaptures: Boolean
+    ): InboxSelectionState {
+        if (!hasVisibleCaptures) return InboxSelectionState()
+        return selection.copy(selectedIds = selection.selectedIds.intersect(visibleIds))
     }
 
     private fun setSelection(selection: InboxSelectionState) {
@@ -265,6 +285,16 @@ class InboxViewModel @Inject constructor(
         val pendingDelete: CaptureItem?,
         val actionInProgressIds: Set<String>,
         val message: InboxMessage?
+    )
+
+    private data class BaseUiState(
+        val isLoading: Boolean = true,
+        val filter: InboxFilter = InboxFilter.PENDING,
+        val searchQuery: String = "",
+        val captures: List<CaptureItem> = emptyList(),
+        val pendingDelete: CaptureItem? = null,
+        val actionInProgressIds: Set<String> = emptySet(),
+        val message: InboxMessage? = null
     )
 
     private companion object {

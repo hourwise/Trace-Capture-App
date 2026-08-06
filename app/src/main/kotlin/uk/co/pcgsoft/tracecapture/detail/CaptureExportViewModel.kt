@@ -142,7 +142,17 @@ class CaptureExportViewModel @Inject constructor(
             it.copy(
                 pendingShare = null,
                 shareLaunchConsumed = false,
-                message = ExportMessage.ExportShared
+                message = ExportMessage.ShareChooserOpened
+            )
+        }
+    }
+
+    fun onShareCancelled() {
+        _exportState.update {
+            it.copy(
+                pendingShare = null,
+                shareLaunchConsumed = false,
+                message = null
             )
         }
     }

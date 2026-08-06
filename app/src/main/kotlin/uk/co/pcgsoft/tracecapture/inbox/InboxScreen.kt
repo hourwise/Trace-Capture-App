@@ -60,7 +60,7 @@ fun InboxScreen(
 
     LaunchedEffect(exportState.message) {
         if (exportState.message == ExportMessage.ExportSaved ||
-            exportState.message == ExportMessage.ExportShared
+            exportState.message == ExportMessage.ShareChooserOpened
         ) {
             viewModel.onSelectionExit()
         }
@@ -90,7 +90,16 @@ fun InboxScreen(
 
     val shareLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
-    ) { exportViewModel.onShareLaunched() }
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            // The chooser launched a target; report the launch (not delivery).
+            exportViewModel.onShareLaunched()
+        } else {
+            // The user dismissed the chooser without picking an app: keep the
+            // selection active and clear the pending share without an error.
+            exportViewModel.onShareCancelled()
+        }
+    }
 
     LaunchedEffect(exportState.pendingShare) {
         val share = exportState.pendingShare ?: return@LaunchedEffect
@@ -219,7 +228,7 @@ fun InboxContent(
         exportMessage?.let { message ->
             val resId = when (message) {
                 ExportMessage.ExportSaved -> R.string.export_saved
-                ExportMessage.ExportShared -> R.string.export_shared
+                ExportMessage.ShareChooserOpened -> R.string.export_share_chooser_opened
                 ExportMessage.ExportFailed -> R.string.export_failed
                 ExportMessage.FileWriteFailed -> R.string.export_write_failed
                 ExportMessage.NoSharingApp -> R.string.export_no_sharing_app

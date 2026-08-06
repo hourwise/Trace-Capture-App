@@ -2,7 +2,7 @@ package uk.co.pcgsoft.tracecapture.export
 
 sealed interface ExportMessage {
     data object ExportSaved : ExportMessage
-    data object ExportShared : ExportMessage
+    data object ShareChooserOpened : ExportMessage
     data object ExportFailed : ExportMessage
     data object FileWriteFailed : ExportMessage
     data object NoSharingApp : ExportMessage

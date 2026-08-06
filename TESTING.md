@@ -15,8 +15,10 @@ src/test/                    # Unit tests (JVM, no Android dependency)
     ShareCaptureViewModelTest   # ViewModel: intent processing, save, duplicate, note, retry
   uk.co.pcgsoft.tracecapture.inbox
     InboxViewModelTest       # ViewModel: filtering, search, status actions, soft delete
-    BulkExportSelectionTest  # ID selection, Select all, reconciliation, restoration policy
+    BulkExportSelectionTest  # ID selection, Select all, single-path reconciliation, restoration policy
     InboxExportViewModelTest  # Bulk export ordering and save/share lifecycle
+  uk.co.pcgsoft.tracecapture.data.repository
+    RoomCaptureRepositoryTest # getActiveByIds chunking, ordering, duplicate/unknown handling
   uk.co.pcgsoft.tracecapture.detail
     CaptureDetailViewModelTest # ViewModel: route validation, loading lifecycle, notes, status actions, delete, unsaved changes
   uk.co.pcgsoft.tracecapture.export
@@ -71,8 +73,9 @@ src/androidTest/             # Instrumented tests (Android device/emulator)
 | `SharedCaptureProcessorTest` | Structured Ready/Rejected results, all rejection propagations |
 | `ShareCaptureViewModelTest` | Intent processing, note editing (2000-char enforcement), save workflow, duplicate detection (newest selected, text-only skips), repeated-save guard, failure/retry, domain properties of saved item |
 | `InboxViewModelTest` | Default filter, filter changes, search functionality, status mutations (mark reviewed, archive, restore), soft delete confirmation, action progress guard, error handling, live Room updates |
-| `BulkExportSelectionTest` | ID-only selection toggling, Select all/Clear all on visible results, result reconciliation, small SavedStateHandle restoration, bounded large-selection restoration |
-| `InboxExportViewModelTest` | Active-ID resolution, visible ordering, `SUPPLIED_CAPTURE_LIST`, JSON/plain-text paths, unavailable IDs, document cancellation, prepared share state |
+| `BulkExportSelectionTest` | ID-only selection toggling, Select all/Clear all on visible results, single authoritative reconciliation (item disappears, filter change, search change, empty result exits, no infinite emissions, stable count), small/large SavedStateHandle restoration, stale-ID pruning after first Room emission, no capture objects in SavedStateHandle, idempotent selection exit |
+| `InboxExportViewModelTest` | Active-ID resolution, visible-order export (select all, repository order ignored, missing IDs without reordering, equal-timestamp ID fallback), `SUPPLIED_CAPTURE_LIST`, unavailable IDs, one-time document launch/consumption/cancellation, write failure retry, repeated-Save guard, one-time share launch/consumption, share-chooser cancellation, `ShareChooserOpened` message, failed share preparation |
+| `RoomCaptureRepositoryTest` | `getActiveByIds` empty-set short-circuit, single ID, 900-ID single chunk, 901 two chunks, 1801 three chunks, duplicate input IDs, deleted/unknown exclusion pass-through, newest-first deterministic ordering |
 | `CaptureDetailViewModelTest` | Invalid route rejection without repository access, Loading-before-first-emission, missing versus externally removed captures, note-save snapshots, status-transition validation, and one-time navigation consumption |
 | `ExportFormatTest` | JSON and PLAIN_TEXT format properties (mimeType and extension) |
 | `UtcTimestampFormatterTest` | UTC timestamp formatting from epoch millis, edge cases (0, max, recent times) |
@@ -131,16 +134,60 @@ tracked.
 
 ## What is not yet tested
 
-- Full external-app export Android integration (FileProvider, share intents, document picker) requires a connected device/emulator; source coverage and compile coverage are present.
+- Full external-app export Android integration (FileProvider, share intents, document picker) requires a connected device/emulator.
 - External chooser behaviour with real Gmail or another target app
 - Settings (Phase 7)
 
-Phase 6A provides comprehensive unit test coverage for export formatting, validation,
-and coordination. Android integration tests for export file operations and share
-handling will be added as part of Phase 6B (if device testing is required) or
-in a later phase.
+### Phase 6B verification status
 
-These will be added in their respective phases.
+Instrumented test sources are present.
+Android test compilation: passed.
+Connected execution: zero tests because no device.
+
+JVM unit tests: 291 tests across 20 classes, all passing, none skipped.
+
+### Phase 6B documented behaviour
+
+- **Single authoritative selection reconciliation path**: Room/filter/search emit
+  only visible captures; the one `combine(baseUiState, _selection)` derives
+  visible IDs, reconciles the persisted selection once, stores it once, and
+  renders from it. No mutation inside the Room `map`, no write-back from
+  rendered state, no feedback loop, and no reconciliation while loading (so a
+  restored selection is never clobbered by the initial empty emission).
+- **500-ID restoration cap**: `SavedStateHandle` stores a `Boolean` and an
+  `ArrayList<String>` of at most 500 IDs. Larger selections keep contextual
+  mode after recreation but restore no IDs (no `TransactionTooLargeException`).
+  Stale restored IDs are pruned after the first real Room emission; an empty
+  restored selection cannot enable export.
+- **SQLite chunking**: `getActiveByIds` issues one `IN` query per 900-ID chunk
+  (below the SQLite bind limit), excludes soft-deleted rows, ignores unknown
+  IDs, and never duplicates results. Verified at 0/1/900/901/1801 IDs in JVM
+  tests plus a real-Room 1801-item chunk-boundary test in `CaptureItemDaoTest`.
+- **Visible-order export guarantee**: `visibleOrderIds` is authoritative for
+  captures visible on screen. Repository return order never changes it, missing
+  IDs are excluded and reported for reconciliation without shifting the rest,
+  and equal timestamps fall back to newest-first then ID-descending only for
+  IDs absent from the visible order.
+- **One-time picker/share consumption**: `pendingDocument`/`pendingShare` are
+  marked consumed before launching; recomposition and Activity recreation never
+  relaunch an already consumed request. Cancellation clears the pending request
+  without reporting failure. Repeated Save taps cannot queue a second request.
+- **Accurate share chooser semantics**: the chooser result only reports that the
+  chooser opened (typed message `ShareChooserOpened`, string "Share chooser
+  opened"). The app never claims the share was delivered. Dismissing the
+  chooser keeps the selection active and clears `pendingShare` without an error.
+- **Selection exit after export**: successful save or share-chooser launch shows
+  its message and exits selection mode once (idempotent); failures and
+  cancellation keep selection and IDs for retry; filter and search are preserved.
+- **No Phase 7 work** was started: no settings, bulk review/archive/delete,
+  import, CSV/ZIP, encryption, backup, WorkManager, cloud, auth, or schema
+  changes.
+
+Phase 6A provides comprehensive unit test coverage for export formatting,
+validation, and coordination. Phase 6B adds the inbox bulk-selection,
+reconciliation, restoration, chunked repository lookup, and one-time export
+lifecycle coverage documented above. Remaining device-only verification is
+listed under "What is not yet tested" and requires a connected device.
 
 ## Coverage expectations
 

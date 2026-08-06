@@ -95,7 +95,7 @@ fun CaptureDetailScreen(
         exportState.message?.let { message ->
             val resId = when (message) {
                 ExportMessage.ExportSaved -> R.string.export_saved
-                ExportMessage.ExportShared -> R.string.export_shared
+                ExportMessage.ShareChooserOpened -> R.string.export_share_chooser_opened
                 ExportMessage.ExportFailed -> R.string.export_failed
                 ExportMessage.FileWriteFailed -> R.string.export_write_failed
                 ExportMessage.NoSharingApp -> R.string.export_no_sharing_app
@@ -132,7 +132,13 @@ fun CaptureDetailScreen(
 
     val shareLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
-    ) { exportViewModel.onShareLaunched() }
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            exportViewModel.onShareLaunched()
+        } else {
+            exportViewModel.onShareCancelled()
+        }
+    }
 
     LaunchedEffect(exportState.pendingShare) {
         val share = exportState.pendingShare ?: return@LaunchedEffect

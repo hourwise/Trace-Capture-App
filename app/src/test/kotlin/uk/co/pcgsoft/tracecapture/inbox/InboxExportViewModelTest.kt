@@ -13,6 +13,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -23,9 +24,13 @@ import uk.co.pcgsoft.tracecapture.domain.CaptureType
 import uk.co.pcgsoft.tracecapture.domain.SyncStatus
 import uk.co.pcgsoft.tracecapture.export.ExportCoordinator
 import uk.co.pcgsoft.tracecapture.export.ExportFormat
+import uk.co.pcgsoft.tracecapture.export.ExportMessage
 import uk.co.pcgsoft.tracecapture.export.ExportResult
+import uk.co.pcgsoft.tracecapture.export.ExportSource
 import uk.co.pcgsoft.tracecapture.export.file.ExportFileWriter
+import uk.co.pcgsoft.tracecapture.export.file.FileWriteResult
 import uk.co.pcgsoft.tracecapture.export.share.ExportShareFileManager
+import uk.co.pcgsoft.tracecapture.export.share.PreparedShareExport
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class InboxExportViewModelTest {
@@ -140,6 +145,286 @@ class InboxExportViewModelTest {
 
         assertEquals(null, viewModel.exportState.value.pendingDocument)
         assertEquals(false, viewModel.exportState.value.isPreparing)
+    }
+
+    @Test
+    fun selectAllExportsInVisibleOrder() = runTest {
+        val middle = item("middle", 1_500L)
+        coEvery { repository.getActiveByIds(setOf("older", "middle", "newer")) } returns
+            listOf(newer, middle, older)
+        coEvery { coordinator.prepareExport(captures = any(), format = any(), source = any()) } returns
+            success(ExportFormat.JSON)
+
+        viewModel.onExportRequested()
+        viewModel.onExportFormatSelected(ExportFormat.JSON)
+        viewModel.onSaveFileRequested(
+            selectedIds = setOf("older", "middle", "newer"),
+            visibleOrderIds = listOf("newer", "middle", "older")
+        )
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            coordinator.prepareExport(
+                captures = listOf(newer, middle, older),
+                format = ExportFormat.JSON,
+                source = ExportSource.SUPPLIED_CAPTURE_LIST
+            )
+        }
+    }
+
+    @Test
+    fun repositoryReturnOrderDoesNotChangeExportOrder() = runTest {
+        val middle = item("middle", 1_500L)
+        // Repository returns oldest-first; visible order must stay authoritative.
+        coEvery { repository.getActiveByIds(setOf("older", "middle", "newer")) } returns
+            listOf(older, middle, newer)
+        coEvery { coordinator.prepareExport(captures = any(), format = any(), source = any()) } returns
+            success(ExportFormat.JSON)
+
+        viewModel.onExportRequested()
+        viewModel.onExportFormatSelected(ExportFormat.JSON)
+        viewModel.onSaveFileRequested(
+            selectedIds = setOf("older", "middle", "newer"),
+            visibleOrderIds = listOf("newer", "middle", "older")
+        )
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            coordinator.prepareExport(
+                captures = listOf(newer, middle, older),
+                format = ExportFormat.JSON,
+                source = ExportSource.SUPPLIED_CAPTURE_LIST
+            )
+        }
+    }
+
+    @Test
+    fun missingIdsDoNotShiftRemainingOrdering() = runTest {
+        val middle = item("middle", 1_500L)
+        // "newer" is unavailable, but "middle" and "older" keep their visible positions.
+        coEvery { repository.getActiveByIds(setOf("older", "middle", "newer")) } returns
+            listOf(middle, older)
+        coEvery { coordinator.prepareExport(captures = any(), format = any(), source = any()) } returns
+            success(ExportFormat.JSON)
+
+        viewModel.onExportRequested()
+        viewModel.onExportFormatSelected(ExportFormat.JSON)
+        viewModel.onSaveFileRequested(
+            selectedIds = setOf("older", "middle", "newer"),
+            visibleOrderIds = listOf("newer", "middle", "older")
+        )
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            coordinator.prepareExport(
+                captures = listOf(middle, older),
+                format = ExportFormat.JSON,
+                source = ExportSource.SUPPLIED_CAPTURE_LIST
+            )
+        }
+        assertEquals(setOf("newer"), viewModel.exportState.value.unavailableIds)
+    }
+
+    @Test
+    fun equalTimestampsUseDeterministicIdFallbackForIdsAbsentFromVisibleOrder() = runTest {
+        val idA = item("id-a", 1_000L)
+        val idB = item("id-b", 1_000L)
+        val idC = item("id-c", 2_000L)
+        // id-a and id-b share a timestamp and neither appears in the visible order.
+        coEvery { repository.getActiveByIds(setOf("id-a", "id-b", "id-c")) } returns
+            listOf(idA, idC, idB)
+        coEvery { coordinator.prepareExport(captures = any(), format = any(), source = any()) } returns
+            success(ExportFormat.JSON)
+
+        viewModel.onExportRequested()
+        viewModel.onExportFormatSelected(ExportFormat.JSON)
+        viewModel.onSaveFileRequested(
+            selectedIds = setOf("id-a", "id-b", "id-c"),
+            visibleOrderIds = listOf("id-c")
+        )
+        advanceUntilIdle()
+
+        // id-c is visible (first); absent ids fall back to newest-first then id DESC.
+        coVerify(exactly = 1) {
+            coordinator.prepareExport(
+                captures = listOf(idC, idB, idA),
+                format = ExportFormat.JSON,
+                source = ExportSource.SUPPLIED_CAPTURE_LIST
+            )
+        }
+    }
+
+    @Test
+    fun documentLaunchIsConsumedOnceAndNeverRelaunches() = runTest {
+        coEvery { repository.getActiveByIds(setOf("older")) } returns listOf(older)
+        coEvery { coordinator.prepareExport(captures = any(), format = any(), source = any()) } returns
+            success(ExportFormat.JSON)
+
+        viewModel.onExportRequested()
+        viewModel.onExportFormatSelected(ExportFormat.JSON)
+        viewModel.onSaveFileRequested(setOf("older"), listOf("older"))
+        advanceUntilIdle()
+        assertTrue(viewModel.exportState.value.pendingDocument != null)
+        assertFalse(viewModel.exportState.value.documentLaunchConsumed)
+
+        // First launch marks consumed; recomposition/rotation calling again changes nothing.
+        viewModel.onDocumentLaunchStarted()
+        assertTrue(viewModel.exportState.value.documentLaunchConsumed)
+        viewModel.onDocumentLaunchStarted()
+        assertTrue(viewModel.exportState.value.documentLaunchConsumed)
+        assertTrue(viewModel.exportState.value.pendingDocument != null)
+    }
+
+    @Test
+    fun documentCancellationIsNotReportedAsFailure() = runTest {
+        coEvery { repository.getActiveByIds(setOf("older")) } returns listOf(older)
+        coEvery { coordinator.prepareExport(captures = any(), format = any(), source = any()) } returns
+            success(ExportFormat.JSON)
+
+        viewModel.onExportRequested()
+        viewModel.onExportFormatSelected(ExportFormat.JSON)
+        viewModel.onSaveFileRequested(setOf("older"), listOf("older"))
+        advanceUntilIdle()
+        viewModel.onDocumentLaunchStarted()
+        viewModel.onDocumentUriReceived(null)
+
+        assertEquals(null, viewModel.exportState.value.pendingDocument)
+        assertEquals(null, viewModel.exportState.value.message)
+        assertFalse(viewModel.exportState.value.isPreparing)
+    }
+
+    @Test
+    fun successfulSaveReportsSavedMessage() = runTest {
+        coEvery { repository.getActiveByIds(setOf("older")) } returns listOf(older)
+        coEvery { coordinator.prepareExport(captures = any(), format = any(), source = any()) } returns
+            success(ExportFormat.JSON)
+        coEvery { writer.write(any(), any()) } returns FileWriteResult.Success
+
+        viewModel.onExportRequested()
+        viewModel.onExportFormatSelected(ExportFormat.JSON)
+        viewModel.onSaveFileRequested(setOf("older"), listOf("older"))
+        advanceUntilIdle()
+        viewModel.onDocumentLaunchStarted()
+        viewModel.onDocumentUriReceived(mockk<android.net.Uri>())
+        advanceUntilIdle()
+
+        assertEquals(ExportMessage.ExportSaved, viewModel.exportState.value.message)
+        assertFalse(viewModel.exportState.value.isPreparing)
+        assertEquals(null, viewModel.exportState.value.pendingDocument)
+    }
+
+    @Test
+    fun failedWriteKeepsStateForRetry() = runTest {
+        coEvery { repository.getActiveByIds(setOf("older")) } returns listOf(older)
+        coEvery { coordinator.prepareExport(captures = any(), format = any(), source = any()) } returns
+            success(ExportFormat.JSON)
+        coEvery { writer.write(any(), any()) } returns FileWriteResult.Failure("boom")
+
+        viewModel.onExportRequested()
+        viewModel.onExportFormatSelected(ExportFormat.JSON)
+        viewModel.onSaveFileRequested(setOf("older"), listOf("older"))
+        advanceUntilIdle()
+        viewModel.onDocumentLaunchStarted()
+        viewModel.onDocumentUriReceived(mockk<android.net.Uri>())
+        advanceUntilIdle()
+
+        assertEquals(ExportMessage.FileWriteFailed, viewModel.exportState.value.message)
+        assertFalse(viewModel.exportState.value.isPreparing)
+        // Failure message never exits selection (screen only exits on success messages).
+        assertEquals(ExportMessage.FileWriteFailed, viewModel.exportState.value.message)
+    }
+
+    @Test
+    fun repeatedSaveTapsCannotQueueTwoDocumentRequests() = runTest {
+        coEvery { repository.getActiveByIds(setOf("older")) } returns listOf(older)
+        coEvery { coordinator.prepareExport(captures = any(), format = any(), source = any()) } returns
+            success(ExportFormat.JSON)
+
+        viewModel.onExportRequested()
+        viewModel.onExportFormatSelected(ExportFormat.JSON)
+        // Two rapid taps before preparation completes.
+        viewModel.onSaveFileRequested(setOf("older"), listOf("older"))
+        viewModel.onSaveFileRequested(setOf("older"), listOf("older"))
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            coordinator.prepareExport(captures = any(), format = any(), source = any())
+        }
+        assertTrue(viewModel.exportState.value.pendingDocument != null)
+    }
+
+    @Test
+    fun shareLaunchIsConsumedOnce() = runTest {
+        prepareShare(testScheduler)
+        viewModel.onShareLaunchStarted()
+        assertTrue(viewModel.exportState.value.shareLaunchConsumed)
+        assertTrue(viewModel.exportState.value.pendingShare != null)
+        viewModel.onShareLaunchStarted()
+        assertTrue(viewModel.exportState.value.shareLaunchConsumed)
+        assertTrue(viewModel.exportState.value.pendingShare != null)
+    }
+
+    @Test
+    fun shareCancellationClearsPendingWithoutMessage() = runTest {
+        prepareShare(testScheduler)
+        viewModel.onShareLaunchStarted()
+        viewModel.onShareCancelled()
+
+        assertEquals(null, viewModel.exportState.value.pendingShare)
+        assertEquals(null, viewModel.exportState.value.message)
+        assertFalse(viewModel.exportState.value.isPreparing)
+    }
+
+    @Test
+    fun chooserCallbackReportsLaunchNotDelivery() = runTest {
+        prepareShare(testScheduler)
+        viewModel.onShareLaunchStarted()
+        viewModel.onShareLaunched()
+
+        assertEquals(ExportMessage.ShareChooserOpened, viewModel.exportState.value.message)
+        assertEquals(null, viewModel.exportState.value.pendingShare)
+    }
+
+    @Test
+    fun failedSharePreparationLeavesWorkflowReusable() = runTest {
+        coEvery { repository.getActiveByIds(setOf("older")) } returns listOf(older)
+        coEvery { coordinator.prepareExport(captures = any(), format = any(), source = any()) } returns
+            success(ExportFormat.PLAIN_TEXT)
+        coEvery { shareManager.prepareShareExport(any(), any(), any()) } throws RuntimeException("no file")
+
+        viewModel.onExportRequested()
+        viewModel.onExportFormatSelected(ExportFormat.PLAIN_TEXT)
+        viewModel.onShareRequested(setOf("older"), listOf("older"))
+        advanceUntilIdle()
+
+        assertEquals(ExportMessage.ExportFailed, viewModel.exportState.value.message)
+        assertFalse(viewModel.exportState.value.isPreparing)
+        assertTrue(viewModel.exportState.value.showSaveOrShareChooser)
+        assertEquals(null, viewModel.exportState.value.pendingShare)
+    }
+
+    private fun success(format: ExportFormat): ExportResult.Success = ExportResult.Success(
+        format = format,
+        content = "{}".toByteArray(),
+        mimeType = format.mimeType,
+        suggestedFileName = if (format == ExportFormat.JSON) "export.json" else "export.txt",
+        captureCount = 1
+    )
+
+    private fun prepareShare(scheduler: kotlinx.coroutines.test.TestCoroutineScheduler) {
+        coEvery { repository.getActiveByIds(setOf("older")) } returns listOf(older)
+        coEvery { coordinator.prepareExport(captures = any(), format = any(), source = any()) } returns
+            success(ExportFormat.PLAIN_TEXT)
+        coEvery { shareManager.prepareShareExport(any(), any(), any()) } returns PreparedShareExport(
+            contentUri = mockk<android.net.Uri>(),
+            mimeType = "text/plain",
+            fileName = "export.txt"
+        )
+        viewModel.onExportRequested()
+        viewModel.onExportFormatSelected(ExportFormat.PLAIN_TEXT)
+        viewModel.onShareRequested(setOf("older"), listOf("older"))
+        scheduler.advanceUntilIdle()
+        assertTrue(viewModel.exportState.value.pendingShare != null)
     }
 
     private fun item(id: String, createdAt: Long) = CaptureItem(

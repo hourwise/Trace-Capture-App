@@ -117,7 +117,7 @@
     <string name="export_preparing">Preparing export</string>
     <string name="export_progress">Preparing export…</string>
     <string name="export_saved">Export saved</string>
-    <string name="export_shared">Export shared</string>
+    <string name="export_share_chooser_opened">Share chooser opened</string>
     <string name="export_failed">Export failed</string>
     <string name="export_write_failed">File write failed</string>
     <string name="export_no_sharing_app">No compatible sharing app</string>

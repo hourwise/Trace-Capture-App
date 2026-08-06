@@ -119,21 +119,40 @@ search query.
 
 Select all operates on the current `uiState.captures` only, so it respects the
 active status filter and debounced search result. It becomes Clear all when every
-visible result is selected. Room emissions reconcile selected IDs against the
-current result set; IDs that move outside a filter, are deleted, or disappear are
-removed. If the visible result becomes empty, selection mode exits.
+visible result is selected.
 
-SavedStateHandle persists selection mode and up to 500 IDs. A larger selection
+Selection reconciliation has exactly one authoritative path. The Room/filter/
+search flows emit only the visible captures (a pure projection — no selection
+mutation happens inside the Room `map`). The single `combine(baseUiState,
+_selection)` then: derives the visible IDs, reconciles the persisted selection
+against them, stores the reconciled result once, and renders UI state from it.
+There is no write-back from rendered state, so there is no two-way feedback loop
+and no emission storm. Reconciliation is skipped while loading so the initial
+empty emission can never clobber a selection restored from `SavedStateHandle`.
+IDs that move outside a filter, are deleted, or disappear are removed exactly
+once per Room emission. If the visible result becomes empty, selection mode
+exits.
+
+`SavedStateHandle` persists selection mode and up to 500 IDs. A larger selection
 keeps contextual mode after recreation but restores with no IDs to avoid a
-`TransactionTooLargeException`.
+`TransactionTooLargeException`. Only a `Boolean` and an `ArrayList<String>` of
+IDs ever enter `SavedStateHandle` — never whole `CaptureItem` objects. Stale
+IDs restored from a previous session are removed after the first real Room
+emission, and a restored empty selection never enables export.
 
 At export time, `InboxExportViewModel` resolves IDs through
 `CaptureRepository.getActiveByIds()` rather than trusting card snapshots. The
-Room implementation uses a single `IN` query per 900-ID chunk, excludes deleted
-rows, and the export ViewModel applies the visible inbox ID order so JSON arrays
-and plain-text numbering match the screen order. Missing records are excluded
-and reconciled from selection. Phase 6B includes export only; there are no bulk
-status, archive, or delete actions.
+Room implementation excludes deleted rows and uses one `IN` query per 900-ID
+chunk, keeping each query below SQLite's bind-parameter limit (selections above
+900 IDs are chunked and reassembled, and duplicate input IDs never duplicate
+results). The export ViewModel treats the visible inbox ID order
+(`visibleOrderIds`) as authoritative for the on-screen list, so JSON arrays and
+plain-text numbering match the screen order; repository return order never
+changes it, missing IDs are excluded and reported for reconciliation without
+shifting the remaining order, and equal timestamps fall back to a deterministic
+newest-first, then ID-descending, order only for IDs absent from the visible
+order. Phase 6B includes export only; there are no bulk status, archive, or
+delete actions.
 
 ## Capture Actions
 
@@ -276,12 +295,14 @@ is valid, the export content is written to it via `FileProvider`.
 
 On Share, the export content is written to a cache file, wrapped with
 `FileProvider.getUriForFile()`, and `pendingShare` is held until the Activity
-result shows the share succeeded or failed.
+result returns. The result only reports that the share chooser opened; the app
+never claims the share was delivered. Dismissing the chooser keeps the
+selection and clears `pendingShare` without an error.
 
 Both `pendingDocument` and `pendingShare` are one-time consumables: they are
-cleared after the picker/activity result, preventing stale re-exports if the
-detail screen is restored or rotated. Only one pending operation is active at
-a time.
+marked consumed before launching and cleared after the picker/activity result,
+preventing stale re-exports or duplicate pickers if the screen is restored or
+rotated. Only one pending operation is active at a time.
 
 ### Typed messages
 
@@ -368,19 +389,27 @@ cache file and shares one `content://` FileProvider URI via `ACTION_SEND` with
 read permission; the export is never copied into `EXTRA_TEXT`.
 
 Document and share requests are marked consumed before launching so Activity
-recreation does not launch a duplicate picker or Sharesheet. Successful save or
-share exits selection mode; preparation, cancellation, and failures leave the
-selection available for retry. Bulk exports retain schema version 1 and use the
-stable `supplied_capture_list` source value.
+recreation does not launch a duplicate picker or Sharesheet. Successful save
+exits selection mode once and shows "Export saved"; a share-chooser launch
+exits selection mode once and shows the accurate "Share chooser opened" message
+— the app never claims delivery. Picker/chooser dismissal and preparation or
+write failures leave the selection and its IDs intact for retry. Repeated Save
+taps cannot queue a second document request while one is preparing or pending.
+Bulk exports retain schema version 1 and use the stable `supplied_capture_list`
+source value.
 
 ### Document picker and share intents
 
 - **Save to file**: `CreateDocument` activity contract receives a URI. If
   non-null and valid, `AndroidExportFileWriter.write()` is called. Result
-  triggers success or failure message.
+  triggers success or failure message. Picker cancellation consumes the pending
+  request without an error.
 - **Share**: `prepareShareExport()` creates a cache file with a `FileProvider`
-  URI, holds `pendingShare`, and awaits share activity result to confirm share
-  was launched or failed.
+  URI, holds `pendingShare`, and launches an `ACTION_SEND` chooser with a single
+  attachment, read-only permission grant, and no export content in `EXTRA_TEXT`.
+  The chooser result only confirms that the chooser opened ("Share chooser
+  opened"); dismissal keeps the selection and clears `pendingShare` without
+  claiming delivery.
 
 ### Limits and safety
 

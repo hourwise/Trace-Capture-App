@@ -17,6 +17,7 @@ import org.junit.runner.RunWith
 import uk.co.pcgsoft.tracecapture.domain.CaptureStatus
 import uk.co.pcgsoft.tracecapture.domain.CaptureType
 import uk.co.pcgsoft.tracecapture.domain.SyncStatus
+import uk.co.pcgsoft.tracecapture.data.repository.RoomCaptureRepository
 import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
@@ -314,5 +315,26 @@ class CaptureItemDaoTest {
     @Test
     fun activeByIdsWithEmptyIdsReturnsEmpty() = runTest {
         assertTrue(dao.getActiveByIds(emptyList()).isEmpty())
+    }
+
+    @Test
+    fun getActiveByIdsAcrossChunkBoundaryThroughRepository() = runTest {
+        // 1801 ids must be split into 900/900/1 chunks below the SQLite bind limit
+        // and reassembled in deterministic newest-first order.
+        val ids = (1..1801).map { "chunk-$it" }
+        val entities = ids.map { id ->
+            createItem(id = id)
+                .copy(createdAtEpochMillis = id.removePrefix("chunk-").toLong())
+                .toEntity()
+        }
+        dao.insertAll(entities)
+
+        val repository = RoomCaptureRepository(dao, CaptureValidator(), CaptureItemFactory())
+        val result = repository.getActiveByIds(ids.toSet())
+
+        assertEquals(1801, result.size)
+        assertEquals(ids.toSet(), result.map { it.id }.toSet())
+        assertEquals("chunk-1801", result.first().id)
+        assertEquals("chunk-1", result.last().id)
     }
 }
